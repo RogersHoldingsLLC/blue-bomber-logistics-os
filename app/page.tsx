@@ -11,10 +11,18 @@ import {
 } from "@/lib/data";
 import { applyIntent } from "@/lib/intent-engine";
 import { loadStoredState, saveStoredState } from "@/lib/storage";
-import { canUseSupabase, loadSupabaseState, saveSupabaseState } from "@/lib/supabase-storage";
+import {
+  canUseSupabase,
+  deleteSupabaseCompany,
+  loadSupabaseState,
+  saveSupabaseState
+} from "@/lib/supabase-storage";
 import type { AccountTab, Carrier, Company, CompanyStatus, Task } from "@/types";
 
 type ProfileTab = "command" | "contacts" | "qualify" | "snapshot";
+type ThemeMode = "light" | "dark";
+
+const THEME_STORAGE_KEY = "blue-bomber-theme";
 
 const accountTabs: Array<{ id: AccountTab; label: string }> = [
   { id: "all", label: "All" },
@@ -52,9 +60,29 @@ export default function Home() {
   const [showProspectForm, setShowProspectForm] = useState(false);
   const [prospectName, setProspectName] = useState("");
   const [searchValue, setSearchValue] = useState("");
+  const [themeMode, setThemeMode] = useState<ThemeMode>("light");
+  const [hasHydratedTheme, setHasHydratedTheme] = useState(false);
   const [noteResult, setNoteResult] = useState<{ tasks: Array<{ title: string; owner: string }> } | null>(
     null
   );
+
+  useEffect(() => {
+    const storedTheme = window.localStorage.getItem(THEME_STORAGE_KEY);
+    const nextTheme = storedTheme === "dark" ? "dark" : "light";
+
+    setThemeMode(nextTheme);
+    document.documentElement.dataset.theme = nextTheme;
+    setHasHydratedTheme(true);
+  }, []);
+
+  useEffect(() => {
+    if (!hasHydratedTheme) {
+      return;
+    }
+
+    document.documentElement.dataset.theme = themeMode;
+    window.localStorage.setItem(THEME_STORAGE_KEY, themeMode);
+  }, [hasHydratedTheme, themeMode]);
 
   useEffect(() => {
     let isMounted = true;
@@ -85,7 +113,7 @@ export default function Home() {
           setContacts(supabaseState.contacts);
           setTasks(supabaseState.tasks);
           setTimeline(supabaseState.timeline);
-          setCarrierItems(supabaseState.carriers.length ? supabaseState.carriers : seedCarriers);
+          setCarrierItems(supabaseState.carriers);
         }
       } catch {
         const storedState = loadStoredState();
@@ -262,6 +290,39 @@ export default function Home() {
     setShowProspectForm(false);
   }
 
+  function deleteCompany(company: Company) {
+    if (!window.confirm(`Delete ${company.name}? This will remove related contacts, tasks, and timeline entries.`)) {
+      return;
+    }
+
+    const nextCompanies = companies.filter((companyItem) => companyItem.id !== company.id);
+    const nextContacts = contacts.filter((contact) => contact.companyId !== company.id);
+    const nextTasks = tasks.filter((task) => task.companyId !== company.id);
+    const nextTimeline = timeline.filter((entry) => entry.companyId !== company.id);
+
+    setCompanies(nextCompanies);
+    setContacts(nextContacts);
+    setTasks(nextTasks);
+    setTimeline(nextTimeline);
+    setSelectedCompanyId(null);
+    setSelectedTaskId(null);
+    setSearchValue("");
+    saveStoredState({
+      companies: nextCompanies,
+      contacts: nextContacts,
+      tasks: nextTasks,
+      timeline: nextTimeline,
+      carriers: carrierItems
+    });
+
+    void deleteSupabaseCompany(company.id).catch((error) => {
+      console.error("[Blue Bomber Supabase] local-only delete after Supabase error:", {
+        company: company.name,
+        error: error instanceof Error ? error.message : error
+      });
+    });
+  }
+
   return (
     <main className="shell">
       <section className="topbar" aria-label="Home">
@@ -269,9 +330,29 @@ export default function Home() {
           <p className="app-label">Blue Bomber Logistics OS</p>
           <h1>Tasks</h1>
         </div>
-        <button className="primary-action" type="button" onClick={() => setShowProspectForm(true)}>
-          + Prospect
-        </button>
+        <div className="topbar-actions">
+          <div className="theme-toggle" aria-label="Theme mode">
+            <button
+              aria-pressed={themeMode === "light"}
+              className={themeMode === "light" ? "active" : ""}
+              type="button"
+              onClick={() => setThemeMode("light")}
+            >
+              Light
+            </button>
+            <button
+              aria-pressed={themeMode === "dark"}
+              className={themeMode === "dark" ? "active" : ""}
+              type="button"
+              onClick={() => setThemeMode("dark")}
+            >
+              Dark
+            </button>
+          </div>
+          <button className="primary-action" type="button" onClick={() => setShowProspectForm(true)}>
+            + Prospect
+          </button>
+        </div>
       </section>
 
       {showProspectForm ? (
@@ -350,6 +431,7 @@ export default function Home() {
           activeTab={activeProfileTab}
           company={selectedCompany}
           contacts={companyContacts}
+          onDeleteCompany={() => deleteCompany(selectedCompany)}
           onSmartNotesChange={(smartNotes) => {
             setCompanies((currentCompanies) =>
               {
@@ -427,6 +509,7 @@ function CompanyProfile({
   noteResult,
   onSmartNotesChange,
   onAddNote,
+  onDeleteCompany,
   onTabChange
 }: {
   activeTab: ProfileTab;
@@ -437,6 +520,7 @@ function CompanyProfile({
   noteResult: { tasks: Array<{ title: string; owner: string }> } | null;
   onSmartNotesChange: (smartNotes: string) => void;
   onAddNote: () => void;
+  onDeleteCompany: () => void;
   onTabChange: (tab: ProfileTab) => void;
 }) {
   return (
@@ -450,9 +534,14 @@ function CompanyProfile({
             {company.city}, {company.state} · {company.segment}
           </p>
         </div>
-        <button className="files-button" type="button">
-          Files
-        </button>
+        <div className="profile-actions">
+          <button className="files-button" type="button">
+            Files
+          </button>
+          <button className="delete-button" type="button" onClick={onDeleteCompany}>
+            Delete
+          </button>
+        </div>
       </div>
 
       <div className="tabs profile-tabs" role="tablist" aria-label="Company profile sections">
@@ -733,6 +822,16 @@ function CompanySearch({
 
 function CarrierPreview({ carriers: carrierItems }: { carriers: Carrier[] }) {
   const previewCarrier = carrierItems[0];
+
+  if (!previewCarrier) {
+    return (
+      <div className="company-picker">
+        <label htmlFor="carrier-search">Search Companies</label>
+        <input id="carrier-search" list="carrier-options" placeholder="Search Carriers" />
+        <div className="company-preview empty-preview">No company selected.</div>
+      </div>
+    );
+  }
 
   return (
     <div className="company-picker">

@@ -2,13 +2,44 @@
   --background: #f5f7fa;
   --surface: #ffffff;
   --surface-muted: #edf2f7;
+  --surface-raised: #f8fbff;
+  --input-surface: #ffffff;
   --text: #17202a;
   --muted: #647081;
   --border: #dde5ee;
+  --border-strong: #b8cde5;
+  --border-focus: #9bbadd;
+  --input-border: #aac4e1;
   --accent: #0b5cad;
   --accent-dark: #084985;
+  --accent-contrast: #ffffff;
   --attention: #b42318;
+  --success-surface: #eef8f0;
+  --success-border: #b8dec0;
+  --success-text: #1d5f2a;
   --shadow: 0 1px 2px rgba(17, 24, 39, 0.06);
+}
+
+:root[data-theme="dark"] {
+  --background: #111827;
+  --surface: #182231;
+  --surface-muted: #222d3e;
+  --surface-raised: #1d2b3d;
+  --input-surface: #111827;
+  --text: #e8edf3;
+  --muted: #a7b2c2;
+  --border: #324154;
+  --border-strong: #405672;
+  --border-focus: #5f7898;
+  --input-border: #4a607c;
+  --accent: #4d8fd1;
+  --accent-dark: #3678b8;
+  --accent-contrast: #07111d;
+  --attention: #f07167;
+  --success-surface: #173124;
+  --success-border: #2f684a;
+  --success-text: #9de0b3;
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.24);
 }
 
 * {
@@ -51,6 +82,38 @@ button {
   margin-bottom: 12px;
 }
 
+.topbar-actions {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+}
+
+.theme-toggle {
+  background: var(--surface-muted);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+}
+
+.theme-toggle button {
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 800;
+  min-height: 32px;
+  padding: 0 10px;
+}
+
+.theme-toggle button.active {
+  background: var(--surface);
+  border-color: var(--border);
+  color: var(--text);
+}
+
 .app-label,
 .topbar h1,
 .task-centerpiece h2,
@@ -75,11 +138,12 @@ h1 {
 
 .primary-action,
 .prospect-form button,
-.files-button {
+.files-button,
+.delete-button {
   background: var(--accent);
   border: 1px solid var(--accent);
   border-radius: 6px;
-  color: #ffffff;
+  color: var(--accent-contrast);
   font-size: 14px;
   font-weight: 700;
   min-height: 40px;
@@ -90,6 +154,16 @@ h1 {
 .prospect-form button:hover,
 .files-button:hover {
   background: var(--accent-dark);
+}
+
+.delete-button {
+  background: transparent;
+  border-color: var(--attention);
+  color: var(--attention);
+}
+
+.delete-button:hover {
+  background: var(--surface-muted);
 }
 
 .prospect-form {
@@ -138,7 +212,7 @@ h1 {
 }
 
 .task-centerpiece {
-  border-color: #b8cde5;
+  border-color: var(--border-strong);
   min-height: 430px;
   padding: 18px;
 }
@@ -252,8 +326,8 @@ h1 {
 
 .company-preview.selected,
 button.company-preview:hover {
-  background: #f8fbff;
-  border-color: #9bbadd;
+  background: var(--surface-raised);
+  border-color: var(--border-focus);
 }
 
 .company-preview span {
@@ -276,8 +350,8 @@ button.company-preview:hover {
 
 .task-list button {
   align-items: flex-start;
-  background: #ffffff;
-  border: 1px solid #cddcec;
+  background: var(--input-surface);
+  border: 1px solid var(--border-strong);
   border-radius: 8px;
   color: var(--text);
   display: flex;
@@ -289,8 +363,8 @@ button.company-preview:hover {
 }
 
 .task-list button:hover {
-  background: #f7fbff;
-  border-color: #9bbadd;
+  background: var(--surface-raised);
+  border-color: var(--border-focus);
 }
 
 .task-list strong {
@@ -348,6 +422,11 @@ button.company-preview:hover {
   margin-bottom: 12px;
 }
 
+.profile-actions {
+  display: flex;
+  gap: 8px;
+}
+
 .profile-header h2 {
   font-size: 20px;
   line-height: 1.2;
@@ -393,8 +472,8 @@ button.company-preview:hover {
 }
 
 .command-center {
-  background: #f8fbff;
-  border: 2px solid #9bbadd;
+  background: var(--surface-raised);
+  border: 2px solid var(--border-focus);
   display: grid;
   gap: 12px;
   grid-column: 1 / 2;
@@ -434,8 +513,10 @@ button.company-preview:hover {
 }
 
 textarea {
-  border: 1px solid #aac4e1;
+  background: var(--input-surface);
+  border: 1px solid var(--input-border);
   border-radius: 8px;
+  color: var(--text);
   min-height: 250px;
   padding: 14px;
   resize: vertical;
@@ -457,7 +538,7 @@ textarea {
   background: var(--accent);
   border: 1px solid var(--accent);
   border-radius: 6px;
-  color: #ffffff;
+  color: var(--accent-contrast);
   font-size: 14px;
   font-weight: 700;
   min-height: 38px;
@@ -465,10 +546,10 @@ textarea {
 }
 
 .note-saved {
-  background: #eef8f0;
-  border: 1px solid #b8dec0;
+  background: var(--success-surface);
+  border: 1px solid var(--success-border);
   border-radius: 8px;
-  color: #1d5f2a;
+  color: var(--success-text);
   display: grid;
   gap: 6px;
   padding: 10px;

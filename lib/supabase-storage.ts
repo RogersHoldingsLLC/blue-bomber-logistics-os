@@ -97,11 +97,6 @@ export async function loadSupabaseState() {
 
   const companyRows = (companiesResult.data ?? []) as CompanyRow[];
 
-  if (!companyRows.length) {
-    console.log("[Blue Bomber Supabase] load from Supabase success: no company rows found");
-    return null;
-  }
-
   console.log("[Blue Bomber Supabase] load from Supabase success:", {
     companies: companyRows.length,
     contacts: contactsResult.data?.length ?? 0,
@@ -197,6 +192,29 @@ export async function saveSupabaseState(state: StoredBlueBomberState) {
   }
 
   console.log("[Blue Bomber Supabase] save to Supabase success");
+
+  return true;
+}
+
+export async function deleteSupabaseCompany(companyId: string) {
+  if (!supabase) {
+    console.log("[Blue Bomber Supabase] delete skipped: client unavailable");
+    return false;
+  }
+
+  console.log("[Blue Bomber Supabase] delete company started:", companyId);
+
+  const result = await supabase.from("companies").delete().eq("id", companyId);
+
+  if (result.error) {
+    console.error(
+      "[Blue Bomber Supabase] delete company failed:",
+      formatSupabaseError(result.error)
+    );
+    throw result.error;
+  }
+
+  console.log("[Blue Bomber Supabase] delete company success:", companyId);
 
   return true;
 }
