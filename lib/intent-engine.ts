@@ -1,4 +1,5 @@
 import type { Company, Contact, Task, TimelineEntry } from "@/types";
+import { createUuid } from "@/lib/uuid";
 
 type IntentOwner = "sales" | "operations";
 
@@ -133,7 +134,7 @@ export function applyIntent(
   const timestamp = now.toISOString();
   const today = "Today";
   const timelineEntry: TimelineEntry = {
-    id: crypto.randomUUID(),
+    id: createUuid(),
     companyId: company.id,
     at: today,
     body: note,
@@ -156,7 +157,7 @@ export function applyIntent(
       return [
         ...uniqueTasks,
         {
-          id: crypto.randomUUID(),
+          id: createUuid(),
           companyId: company.id,
           title: taskRule.taskName,
           due: taskRule.match === "call monday" ? "Monday" : "Next",

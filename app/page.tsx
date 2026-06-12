@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import * as XLSX from "xlsx";
 import {
   carriers as seedCarriers,
   companies as seedCompanies,
@@ -13,14 +14,27 @@ import { applyIntent } from "@/lib/intent-engine";
 import { loadStoredState, saveStoredState } from "@/lib/storage";
 import {
   canUseSupabase,
+  deleteSupabaseCompanies,
   deleteSupabaseCompany,
+  importSupabaseProspects,
   loadSupabaseState,
   saveSupabaseState
 } from "@/lib/supabase-storage";
-import type { AccountTab, Carrier, Company, CompanyStatus, Task } from "@/types";
+import { createUuid } from "@/lib/uuid";
+import type { AccountTab, Carrier, Company, CompanyStatus, Contact, Task } from "@/types";
 
 type ProfileTab = "command" | "contacts" | "qualify" | "snapshot";
 type ThemeMode = "light" | "dark";
+type ProspectImportRow = {
+  companyName: string;
+  status: CompanyStatus;
+  salesLead: string;
+  operationsLead: string;
+  phone: string;
+  email: string;
+  website: string;
+  notes: string;
+};
 
 const THEME_STORAGE_KEY = "blue-bomber-theme";
 
@@ -62,6 +76,10 @@ export default function Home() {
   const [searchValue, setSearchValue] = useState("");
   const [themeMode, setThemeMode] = useState<ThemeMode>("light");
   const [hasHydratedTheme, setHasHydratedTheme] = useState(false);
+  const [importResult, setImportResult] = useState<{ imported: number; skipped: number } | null>(null);
+  const [isImporting, setIsImporting] = useState(false);
+  const [selectedBulkProspectIds, setSelectedBulkProspectIds] = useState<string[]>([]);
+  const importInputRef = useRef<HTMLInputElement | null>(null);
   const [noteResult, setNoteResult] = useState<{ tasks: Array<{ title: string; owner: string }> } | null>(
     null
   );
@@ -161,13 +179,21 @@ export default function Home() {
     () => tasks.find((task) => task.id === selectedTaskId) ?? null,
     [selectedTaskId, tasks]
   );
+  const visibleCompanies = useMemo(
+    () => companies.filter((company) => company.active !== false),
+    [companies]
+  );
+  const visibleCompanyIds = useMemo(
+    () => new Set(visibleCompanies.map((company) => company.id)),
+    [visibleCompanies]
+  );
 
   const openTasks = useMemo(
     () =>
       tasks
-        .filter((task) => task.status === "open")
+        .filter((task) => task.status === "open" && visibleCompanyIds.has(task.companyId))
         .sort((firstTask, secondTask) => firstTask.createdAt.localeCompare(secondTask.createdAt)),
-    [tasks]
+    [tasks, visibleCompanyIds]
   );
   const selectedCompanyTasks = selectedCompany
     ? tasks.filter((task) => task.companyId === selectedCompany.id)
@@ -175,7 +201,7 @@ export default function Home() {
   const companyContacts = selectedCompany
     ? contacts.filter((contact) => contact.companyId === selectedCompany.id).slice(0, 3)
     : [];
-  const filteredCompanies = companies.filter((company) => {
+  const filteredCompanies = visibleCompanies.filter((company) => {
     if (activeAccountTab === "prospects") {
       return company.status === "prospect";
     }
@@ -207,6 +233,14 @@ export default function Home() {
     setSelectedCompanyId(task.companyId);
     setSelectedTaskId(task.id);
     setActiveProfileTab("command");
+  }
+
+  function toggleBulkProspect(companyId: string) {
+    setSelectedBulkProspectIds((currentIds) =>
+      currentIds.includes(companyId)
+        ? currentIds.filter((currentId) => currentId !== companyId)
+        : [...currentIds, companyId]
+    );
   }
 
   async function persistStateToStorage(state: {
@@ -259,7 +293,7 @@ export default function Home() {
     }
 
     const newCompany: Company = {
-      id: crypto.randomUUID(),
+      id: createUuid(),
       name: trimmedName,
       status: "prospect",
       city: "New",
@@ -318,6 +352,189 @@ export default function Home() {
     void deleteSupabaseCompany(company.id).catch((error) => {
       console.error("[Blue Bomber Supabase] local-only delete after Supabase error:", {
         company: company.name,
+        error: error instanceof Error ? error.message : error
+      });
+    });
+  }
+
+  async function importProspects(file: File) {
+    setIsImporting(true);
+
+    try {
+      const rows = await readProspectImportRows(file);
+      const existingNames = new Set(companies.map((company) => normalizeCompanyName(company.name)));
+      const seenNames = new Set<string>();
+      const importedCompanies: Company[] = [];
+      const importedContacts: Contact[] = [];
+      let skipped = 0;
+
+      rows.forEach((row) => {
+        const normalizedName = normalizeCompanyName(row.companyName);
+
+        if (!normalizedName || existingNames.has(normalizedName) || seenNames.has(normalizedName)) {
+          skipped += 1;
+          return;
+        }
+
+        seenNames.add(normalizedName);
+
+        const companyId = createUuid();
+        const contactId = createUuid();
+        const smartNotes = [row.notes, row.website ? `Website: ${row.website}` : ""]
+          .filter(Boolean)
+          .join("\n");
+        const company: Company = {
+          id: companyId,
+          name: row.companyName,
+          status: row.status,
+          city: "Imported",
+          state: "Lead",
+          segment: "Prospect",
+          currentOpportunity: "Imported prospect. Add opportunity details after first contact.",
+          smartNotes,
+          salesLead: row.salesLead || "Louie",
+          operationsLead: row.operationsLead || "Brian",
+          primaryContactId: row.phone || row.email ? contactId : "",
+          lastContact: "",
+          lastActivity: "Imported",
+          active: true,
+          qualifyingQuestions: Object.fromEntries(
+            qualifyingQuestions.map((question) => [question, ""])
+          )
+        };
+
+        importedCompanies.push(company);
+
+        if (row.phone || row.email) {
+          importedContacts.push({
+            id: contactId,
+            companyId,
+            name: "Imported Contact",
+            role: "Imported",
+            email: row.email,
+            phone: row.phone
+          });
+        }
+      });
+
+      if (importedCompanies.length) {
+        const savedToSupabase = await importSupabaseProspects(importedCompanies, importedContacts);
+
+        if (!savedToSupabase) {
+          throw new Error("Supabase client unavailable.");
+        }
+
+        const nextCompanies = [...importedCompanies, ...companies];
+        const nextContacts = [...importedContacts, ...contacts];
+
+        setCompanies(nextCompanies);
+        setContacts(nextContacts);
+        saveStoredState({
+          companies: nextCompanies,
+          contacts: nextContacts,
+          tasks,
+          timeline,
+          carriers: carrierItems
+        });
+      }
+
+      setImportResult({ imported: importedCompanies.length, skipped });
+    } catch (error) {
+      console.error("[Blue Bomber Import] Prospect import failed:", error);
+      window.alert(error instanceof Error ? error.message : "Prospect import failed.");
+    } finally {
+      setIsImporting(false);
+
+      if (importInputRef.current) {
+        importInputRef.current.value = "";
+      }
+    }
+  }
+
+  function updateSelectedProspectStatus(status: CompanyStatus) {
+    if (!selectedBulkProspectIds.length) {
+      return;
+    }
+
+    const selectedIds = new Set(selectedBulkProspectIds);
+    const nextCompanies = companies.map((company) =>
+      selectedIds.has(company.id) ? { ...company, status } : company
+    );
+
+    setCompanies(nextCompanies);
+    setSelectedBulkProspectIds([]);
+    persistState({ companies: nextCompanies }, "bulk updating prospect status");
+  }
+
+  function archiveSelectedProspects() {
+    if (!selectedBulkProspectIds.length) {
+      return;
+    }
+
+    const selectedIds = new Set(selectedBulkProspectIds);
+    const nextCompanies = companies.map((company) =>
+      selectedIds.has(company.id) ? { ...company, active: false } : company
+    );
+
+    setCompanies(nextCompanies);
+    setSelectedBulkProspectIds([]);
+
+    if (selectedCompanyId && selectedIds.has(selectedCompanyId)) {
+      setSelectedCompanyId(null);
+      setSelectedTaskId(null);
+      setSearchValue("");
+    }
+
+    persistState({ companies: nextCompanies }, "bulk archiving prospects");
+  }
+
+  function deleteSelectedProspects() {
+    if (!selectedBulkProspectIds.length) {
+      return;
+    }
+
+    const companyIdsToDelete = selectedBulkProspectIds;
+    const selectedIds = new Set(companyIdsToDelete);
+    const selectedNames = companies
+      .filter((company) => selectedIds.has(company.id))
+      .map((company) => company.name);
+
+    if (
+      !window.confirm(
+        `Delete ${selectedNames.length} selected prospect${selectedNames.length === 1 ? "" : "s"}? This will remove related contacts, tasks, and timeline entries.`
+      )
+    ) {
+      return;
+    }
+
+    const nextCompanies = companies.filter((company) => !selectedIds.has(company.id));
+    const nextContacts = contacts.filter((contact) => !selectedIds.has(contact.companyId));
+    const nextTasks = tasks.filter((task) => !selectedIds.has(task.companyId));
+    const nextTimeline = timeline.filter((entry) => !selectedIds.has(entry.companyId));
+
+    setCompanies(nextCompanies);
+    setContacts(nextContacts);
+    setTasks(nextTasks);
+    setTimeline(nextTimeline);
+    setSelectedBulkProspectIds([]);
+
+    if (selectedCompanyId && selectedIds.has(selectedCompanyId)) {
+      setSelectedCompanyId(null);
+      setSelectedTaskId(null);
+      setSearchValue("");
+    }
+
+    saveStoredState({
+      companies: nextCompanies,
+      contacts: nextContacts,
+      tasks: nextTasks,
+      timeline: nextTimeline,
+      carriers: carrierItems
+    });
+
+    void deleteSupabaseCompanies(companyIdsToDelete).catch((error) => {
+      console.error("[Blue Bomber Supabase] local-only bulk delete after Supabase error:", {
+        count: companyIdsToDelete.length,
         error: error instanceof Error ? error.message : error
       });
     });
@@ -402,6 +619,7 @@ export default function Home() {
                   setSearchValue("");
                   setSelectedCompanyId(null);
                   setSelectedTaskId(null);
+                  setSelectedBulkProspectIds([]);
                 }}
                 role="tab"
                 type="button"
@@ -415,12 +633,22 @@ export default function Home() {
             <CarrierPreview carriers={carrierItems} />
           ) : (
             <CompanySearch
+              activeAccountTab={activeAccountTab}
               companies={filteredCompanies}
+              importInputRef={importInputRef}
+              importResult={importResult}
+              isImporting={isImporting}
               previewCompany={previewCompany}
               searchValue={searchValue}
+              selectedBulkProspectIds={selectedBulkProspectIds}
               selectedCompanyId={selectedCompanyId}
+              onArchiveSelected={archiveSelectedProspects}
+              onBulkStatusChange={updateSelectedProspectStatus}
+              onDeleteSelected={deleteSelectedProspects}
+              onImportFile={importProspects}
               onSearchChange={setSearchValue}
               onSelect={selectCompany}
+              onToggleBulkProspect={toggleBulkProspect}
             />
           )}
         </aside>
@@ -763,23 +991,121 @@ function NoteSavedMessage({ tasks }: { tasks: Array<{ title: string; owner: stri
 }
 
 function CompanySearch({
+  activeAccountTab,
   companies,
+  importInputRef,
+  importResult,
+  isImporting,
   previewCompany,
   searchValue,
+  selectedBulkProspectIds,
   selectedCompanyId,
+  onArchiveSelected,
+  onBulkStatusChange,
+  onDeleteSelected,
+  onImportFile,
   onSearchChange,
-  onSelect
+  onSelect,
+  onToggleBulkProspect
 }: {
+  activeAccountTab: AccountTab;
   companies: Company[];
+  importInputRef: React.RefObject<HTMLInputElement>;
+  importResult: { imported: number; skipped: number } | null;
+  isImporting: boolean;
   previewCompany: Company | null;
   searchValue: string;
+  selectedBulkProspectIds: string[];
   selectedCompanyId: string | null;
+  onArchiveSelected: () => void;
+  onBulkStatusChange: (status: CompanyStatus) => void;
+  onDeleteSelected: () => void;
+  onImportFile: (file: File) => void;
   onSearchChange: (value: string) => void;
   onSelect: (companyId: string) => void;
+  onToggleBulkProspect: (companyId: string) => void;
 }) {
+  const hasBulkSelection = selectedBulkProspectIds.length > 0;
+
   return (
     <div className="company-picker">
       <label htmlFor="company-search">Search Companies</label>
+      {activeAccountTab === "prospects" ? (
+        <>
+          <div className="import-control">
+            <button type="button" onClick={() => importInputRef.current?.click()} disabled={isImporting}>
+              {isImporting ? "Importing" : "Import"}
+            </button>
+            <input
+              ref={importInputRef}
+              accept=".csv,.xlsx"
+              aria-label="Import prospects"
+              type="file"
+              onChange={(event) => {
+                const file = event.target.files?.[0];
+
+                if (file) {
+                  void onImportFile(file);
+                }
+              }}
+            />
+            {importResult ? (
+              <span>
+                Imported {importResult.imported} · Skipped {importResult.skipped}
+              </span>
+            ) : null}
+          </div>
+          <div className="bulk-control" aria-label="Bulk prospect actions">
+            <div className="bulk-actions">
+              <span>{selectedBulkProspectIds.length} selected</span>
+              <select
+                aria-label="Change selected prospect status"
+                disabled={!hasBulkSelection}
+                defaultValue=""
+                onChange={(event) => {
+                  const status = event.target.value as CompanyStatus | "";
+
+                  if (status) {
+                    onBulkStatusChange(status);
+                    event.currentTarget.value = "";
+                  }
+                }}
+              >
+                <option value="">Status</option>
+                <option value="prospect">Prospect</option>
+                <option value="customer">Customer</option>
+              </select>
+              <button type="button" disabled={!hasBulkSelection} onClick={onArchiveSelected}>
+                Archive
+              </button>
+              <button
+                className="danger"
+                type="button"
+                disabled={!hasBulkSelection}
+                onClick={onDeleteSelected}
+              >
+                Delete
+              </button>
+            </div>
+            {companies.length ? (
+              <ul className="bulk-list">
+                {companies.map((company) => (
+                  <li key={company.id}>
+                    <label>
+                      <input
+                        checked={selectedBulkProspectIds.includes(company.id)}
+                        type="checkbox"
+                        onChange={() => onToggleBulkProspect(company.id)}
+                      />
+                      <span>{company.name}</span>
+                    </label>
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+          </div>
+        </>
+      ) : null}
       <input
         id="company-search"
         list="company-options"
@@ -818,6 +1144,114 @@ function CompanySearch({
       )}
     </div>
   );
+}
+
+async function readProspectImportRows(file: File) {
+  const extension = file.name.split(".").pop()?.toLowerCase();
+
+  if (extension === "csv") {
+    return parseProspectRows(parseCsv(await file.text()));
+  }
+
+  if (extension === "xlsx") {
+    const workbook = XLSX.read(await file.arrayBuffer(), { type: "array" });
+    const firstSheetName = workbook.SheetNames[0];
+
+    if (!firstSheetName) {
+      return [];
+    }
+
+    return parseProspectRows(
+      XLSX.utils.sheet_to_json<Record<string, unknown>>(workbook.Sheets[firstSheetName], {
+        defval: ""
+      })
+    );
+  }
+
+  throw new Error("Import requires a .csv or .xlsx file.");
+}
+
+function parseProspectRows(rows: Array<Record<string, unknown>>): ProspectImportRow[] {
+  return rows
+    .map((row) => ({
+      companyName: getImportValue(row, "Company Name"),
+      status: parseImportStatus(getImportValue(row, "Status")),
+      salesLead: getImportValue(row, "Sales Lead"),
+      operationsLead: getImportValue(row, "Operations Lead"),
+      phone: getImportValue(row, "Phone"),
+      email: getImportValue(row, "Email"),
+      website: getImportValue(row, "Website"),
+      notes: getImportValue(row, "Notes")
+    }))
+    .filter((row) => row.companyName);
+}
+
+function parseCsv(value: string) {
+  const rows: string[][] = [];
+  let currentField = "";
+  let currentRow: string[] = [];
+  let isQuoted = false;
+
+  for (let index = 0; index < value.length; index += 1) {
+    const character = value[index];
+    const nextCharacter = value[index + 1];
+
+    if (character === '"' && isQuoted && nextCharacter === '"') {
+      currentField += '"';
+      index += 1;
+      continue;
+    }
+
+    if (character === '"') {
+      isQuoted = !isQuoted;
+      continue;
+    }
+
+    if (character === "," && !isQuoted) {
+      currentRow.push(currentField);
+      currentField = "";
+      continue;
+    }
+
+    if ((character === "\n" || character === "\r") && !isQuoted) {
+      if (character === "\r" && nextCharacter === "\n") {
+        index += 1;
+      }
+
+      currentRow.push(currentField);
+      rows.push(currentRow);
+      currentRow = [];
+      currentField = "";
+      continue;
+    }
+
+    currentField += character;
+  }
+
+  currentRow.push(currentField);
+  rows.push(currentRow);
+
+  const [headers = [], ...dataRows] = rows.filter((row) => row.some((field) => field.trim()));
+
+  return dataRows.map((row) =>
+    Object.fromEntries(headers.map((header, index) => [header.trim(), row[index]?.trim() ?? ""]))
+  );
+}
+
+function getImportValue(row: Record<string, unknown>, columnName: string) {
+  const match = Object.entries(row).find(
+    ([key]) => key.trim().toLowerCase() === columnName.toLowerCase()
+  );
+
+  return match?.[1] == null ? "" : String(match[1]).trim();
+}
+
+function parseImportStatus(value: string): CompanyStatus {
+  return value.toLowerCase() === "customer" ? "customer" : "prospect";
+}
+
+function normalizeCompanyName(value: string) {
+  return value.trim().toLowerCase();
 }
 
 function CarrierPreview({ carriers: carrierItems }: { carriers: Carrier[] }) {

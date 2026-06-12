@@ -294,6 +294,126 @@ h1 {
   gap: 10px;
 }
 
+.import-control {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+}
+
+.import-control button {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 800;
+  min-height: 34px;
+  padding: 0 10px;
+}
+
+.import-control button:hover {
+  border-color: var(--border-focus);
+}
+
+.import-control button:disabled {
+  color: var(--muted);
+  cursor: wait;
+}
+
+.import-control input {
+  display: none;
+}
+
+.import-control span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.bulk-control {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  display: grid;
+  gap: 8px;
+  padding: 8px;
+}
+
+.bulk-actions {
+  display: grid;
+  gap: 6px;
+  grid-template-columns: 1fr;
+}
+
+.bulk-actions span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.bulk-actions button,
+.bulk-actions select {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 800;
+  min-height: 32px;
+  padding: 0 8px;
+}
+
+.bulk-actions button:hover,
+.bulk-actions select:hover {
+  border-color: var(--border-focus);
+}
+
+.bulk-actions button:disabled,
+.bulk-actions select:disabled {
+  color: var(--muted);
+  cursor: not-allowed;
+  opacity: 0.68;
+}
+
+.bulk-actions .danger {
+  border-color: var(--attention);
+  color: var(--attention);
+}
+
+.bulk-list {
+  display: grid;
+  gap: 5px;
+  list-style: none;
+  margin: 0;
+  max-height: 148px;
+  overflow: auto;
+  padding: 0;
+}
+
+.company-picker .bulk-list label {
+  align-items: center;
+  background: var(--surface-muted);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  display: flex;
+  gap: 7px;
+  min-height: 30px;
+  padding: 6px;
+  text-transform: none;
+}
+
+.company-picker .bulk-list input {
+  margin: 0;
+  min-height: auto;
+  width: auto;
+}
+
+.bulk-list span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .company-picker label {
   color: var(--muted);
   font-size: 12px;

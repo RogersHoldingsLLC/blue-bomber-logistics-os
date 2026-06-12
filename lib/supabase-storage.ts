@@ -219,6 +219,76 @@ export async function deleteSupabaseCompany(companyId: string) {
   return true;
 }
 
+export async function deleteSupabaseCompanies(companyIds: string[]) {
+  if (!supabase) {
+    console.log("[Blue Bomber Supabase] bulk delete skipped: client unavailable");
+    return false;
+  }
+
+  if (!companyIds.length) {
+    return true;
+  }
+
+  console.log("[Blue Bomber Supabase] bulk delete companies started:", companyIds);
+
+  const result = await supabase.from("companies").delete().in("id", companyIds);
+
+  if (result.error) {
+    console.error(
+      "[Blue Bomber Supabase] bulk delete companies failed:",
+      formatSupabaseError(result.error)
+    );
+    throw result.error;
+  }
+
+  console.log("[Blue Bomber Supabase] bulk delete companies success:", companyIds.length);
+
+  return true;
+}
+
+export async function importSupabaseProspects(companies: Company[], contacts: Contact[]) {
+  if (!supabase) {
+    console.log("[Blue Bomber Supabase] import skipped: client unavailable");
+    return false;
+  }
+
+  console.log("[Blue Bomber Supabase] import prospects started:", {
+    companies: companies.length,
+    contacts: contacts.length
+  });
+
+  const companyRows = companies.map(toCompanyRow);
+  const contactRows = contacts.map(toContactRow);
+
+  const companyResult = companyRows.length
+    ? await supabase.from("companies").insert(companyRows)
+    : { error: null };
+
+  if (companyResult.error) {
+    console.error(
+      "[Blue Bomber Supabase] import prospects failed at companies:",
+      formatSupabaseError(companyResult.error)
+    );
+    throw companyResult.error;
+  }
+
+  const contactResult = contactRows.length
+    ? await supabase.from("contacts").insert(contactRows)
+    : { error: null };
+
+  if (contactResult.error) {
+    console.error(
+      "[Blue Bomber Supabase] import prospects failed at contacts:",
+      formatSupabaseError(contactResult.error)
+    );
+    throw contactResult.error;
+  }
+
+  console.log("[Blue Bomber Supabase] import prospects success");
+
+  return true;
+}
+
 function toCompanyRow(company: Company): CompanyRow {
   return {
     id: company.id,
