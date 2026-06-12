@@ -1,8 +1,8 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
-  carriers,
+  carriers as seedCarriers,
   companies as seedCompanies,
   contacts as seedContacts,
   qualifyingQuestions,
@@ -10,6 +10,7 @@ import {
   timeline as seedTimeline
 } from "@/lib/data";
 import { applyIntent } from "@/lib/intent-engine";
+import { loadStoredState, saveStoredState } from "@/lib/storage";
 import type { AccountTab, Carrier, Company, CompanyStatus, Task } from "@/types";
 
 type ProfileTab = "command" | "contacts" | "qualify" | "snapshot";
@@ -41,6 +42,8 @@ export default function Home() {
   const [contacts, setContacts] = useState(seedContacts);
   const [tasks, setTasks] = useState(seedTasks);
   const [timeline, setTimeline] = useState(seedTimeline);
+  const [carrierItems, setCarrierItems] = useState(seedCarriers);
+  const [hasHydratedStorage, setHasHydratedStorage] = useState(false);
   const [selectedCompanyId, setSelectedCompanyId] = useState<string | null>(null);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [activeAccountTab, setActiveAccountTab] = useState<AccountTab>("all");
@@ -51,6 +54,34 @@ export default function Home() {
   const [noteResult, setNoteResult] = useState<{ tasks: Array<{ title: string; owner: string }> } | null>(
     null
   );
+
+  useEffect(() => {
+    const storedState = loadStoredState();
+
+    if (storedState) {
+      setCompanies(storedState.companies);
+      setContacts(storedState.contacts);
+      setTasks(storedState.tasks);
+      setTimeline(storedState.timeline);
+      setCarrierItems(storedState.carriers.length ? storedState.carriers : seedCarriers);
+    }
+
+    setHasHydratedStorage(true);
+  }, []);
+
+  useEffect(() => {
+    if (!hasHydratedStorage) {
+      return;
+    }
+
+    saveStoredState({
+      companies,
+      contacts,
+      tasks,
+      timeline,
+      carriers: carrierItems
+    });
+  }, [carrierItems, companies, contacts, hasHydratedStorage, tasks, timeline]);
 
   const selectedCompany = useMemo(
     () => companies.find((company) => company.id === selectedCompanyId) ?? null,
@@ -108,6 +139,22 @@ export default function Home() {
     setActiveProfileTab("command");
   }
 
+  function persistState(overrides: {
+    companies?: typeof companies;
+    contacts?: typeof contacts;
+    tasks?: typeof tasks;
+    timeline?: typeof timeline;
+    carriers?: typeof carrierItems;
+  }) {
+    saveStoredState({
+      companies: overrides.companies ?? companies,
+      contacts: overrides.contacts ?? contacts,
+      tasks: overrides.tasks ?? tasks,
+      timeline: overrides.timeline ?? timeline,
+      carriers: overrides.carriers ?? carrierItems
+    });
+  }
+
   function addProspect() {
     const trimmedName = prospectName.trim();
 
@@ -135,7 +182,10 @@ export default function Home() {
       )
     };
 
-    setCompanies((currentCompanies) => [newCompany, ...currentCompanies]);
+    const nextCompanies = [newCompany, ...companies];
+
+    setCompanies(nextCompanies);
+    persistState({ companies: nextCompanies });
     setSelectedCompanyId(newCompany.id);
     setActiveAccountTab("all");
     setActiveProfileTab("command");
@@ -213,7 +263,7 @@ export default function Home() {
           </div>
 
           {activeAccountTab === "carriers" ? (
-            <CarrierPreview carriers={carriers} />
+            <CarrierPreview carriers={carrierItems} />
           ) : (
             <CompanySearch
               companies={filteredCompanies}
@@ -234,9 +284,15 @@ export default function Home() {
           contacts={companyContacts}
           onSmartNotesChange={(smartNotes) => {
             setCompanies((currentCompanies) =>
-              currentCompanies.map((company) =>
-                company.id === selectedCompany.id ? { ...company, smartNotes } : company
-              )
+              {
+                const nextCompanies = currentCompanies.map((company) =>
+                  company.id === selectedCompany.id ? { ...company, smartNotes } : company
+                );
+
+                persistState({ companies: nextCompanies });
+
+                return nextCompanies;
+              }
             );
           }}
           onAddNote={() => {
@@ -249,20 +305,27 @@ export default function Home() {
             }
 
 	    const result = applyIntent(latestCompany.smartNotes, latestCompany, contacts);
-        
-	    setCompanies((currentCompanies) =>
-              currentCompanies.map((company) =>
-                company.id === latestCompany.id ? { ...result.company, smartNotes: "" } : company
-              )
+            const nextCompanies = companies.map((company) =>
+              company.id === latestCompany.id ? { ...result.company, smartNotes: "" } : company
             );
+            const nextTasks = result.tasks.length ? [...result.tasks, ...tasks] : tasks;
+            const nextTimeline = [result.timelineEntry, ...timeline];
+        
+	    setCompanies(nextCompanies);
             setContacts(result.contacts);
 
             if (result.tasks.length) {
-              setTasks((currentTasks) => [...result.tasks, ...currentTasks]);
+              setTasks(nextTasks);
               setSelectedTaskId(result.tasks[0].id);
             }
 
-            setTimeline((currentTimeline) => [result.timelineEntry, ...currentTimeline]);
+            setTimeline(nextTimeline);
+            persistState({
+              companies: nextCompanies,
+              contacts: result.contacts,
+              tasks: nextTasks,
+              timeline: nextTimeline
+            });
             setNoteResult({
               tasks: result.tasks.map((task) => ({ title: task.title, owner: task.owner }))
             });
