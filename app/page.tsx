@@ -1,0 +1,703 @@
+"use client";
+
+import { useMemo, useState } from "react";
+import {
+  carriers,
+  companies as seedCompanies,
+  contacts as seedContacts,
+  qualifyingQuestions,
+  tasks as seedTasks,
+  timeline as seedTimeline
+} from "@/lib/data";
+import { applyIntent } from "@/lib/intent-engine";
+import type { AccountTab, Carrier, Company, CompanyStatus, Task } from "@/types";
+
+type ProfileTab = "command" | "contacts" | "qualify" | "snapshot";
+
+const accountTabs: Array<{ id: AccountTab; label: string }> = [
+  { id: "all", label: "All" },
+  { id: "prospects", label: "Prospects" },
+  { id: "customers", label: "Customers" },
+  { id: "carriers", label: "Carriers" }
+];
+
+const profileTabs: Array<{ id: ProfileTab; label: string }> = [
+  { id: "command", label: "ACTIVITY NOTES" },
+  { id: "contacts", label: "Contacts" },
+  { id: "qualify", label: "Qualify" },
+  { id: "snapshot", label: "Snapshot" }
+];
+
+function statusLabel(status: CompanyStatus) {
+  return status === "prospect" ? "Prospect" : "Customer";
+}
+
+function taskStatusLabel(status: Task["status"]) {
+  return status === "open" ? "Open" : "Done";
+}
+
+export default function Home() {
+  const [companies, setCompanies] = useState(seedCompanies);
+  const [contacts, setContacts] = useState(seedContacts);
+  const [tasks, setTasks] = useState(seedTasks);
+  const [timeline, setTimeline] = useState(seedTimeline);
+  const [selectedCompanyId, setSelectedCompanyId] = useState<string | null>(null);
+  const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
+  const [activeAccountTab, setActiveAccountTab] = useState<AccountTab>("all");
+  const [activeProfileTab, setActiveProfileTab] = useState<ProfileTab>("command");
+  const [showProspectForm, setShowProspectForm] = useState(false);
+  const [prospectName, setProspectName] = useState("");
+  const [searchValue, setSearchValue] = useState("");
+  const [noteResult, setNoteResult] = useState<{ tasks: Array<{ title: string; owner: string }> } | null>(
+    null
+  );
+
+  const selectedCompany = useMemo(
+    () => companies.find((company) => company.id === selectedCompanyId) ?? null,
+    [companies, selectedCompanyId]
+  );
+  const selectedTask = useMemo(
+    () => tasks.find((task) => task.id === selectedTaskId) ?? null,
+    [selectedTaskId, tasks]
+  );
+
+  const openTasks = useMemo(
+    () =>
+      tasks
+        .filter((task) => task.status === "open")
+        .sort((firstTask, secondTask) => firstTask.createdAt.localeCompare(secondTask.createdAt)),
+    [tasks]
+  );
+  const selectedCompanyTasks = selectedCompany
+    ? tasks.filter((task) => task.companyId === selectedCompany.id)
+    : [];
+  const companyContacts = selectedCompany
+    ? contacts.filter((contact) => contact.companyId === selectedCompany.id).slice(0, 3)
+    : [];
+  const filteredCompanies = companies.filter((company) => {
+    if (activeAccountTab === "prospects") {
+      return company.status === "prospect";
+    }
+
+    if (activeAccountTab === "customers") {
+      return company.status === "customer";
+    }
+
+    if (activeAccountTab === "carriers") {
+      return false;
+    }
+
+    return true;
+  });
+  const previewCompany =
+    selectedCompany ??
+    filteredCompanies.find((company) =>
+      company.name.toLowerCase().includes(searchValue.toLowerCase())
+    ) ??
+    null;
+
+  function selectCompany(companyId: string) {
+    setSelectedCompanyId(companyId);
+    setSelectedTaskId(null);
+    setActiveProfileTab("command");
+  }
+
+  function selectTask(task: Task) {
+    setSelectedCompanyId(task.companyId);
+    setSelectedTaskId(task.id);
+    setActiveProfileTab("command");
+  }
+
+  function addProspect() {
+    const trimmedName = prospectName.trim();
+
+    if (!trimmedName) {
+      return;
+    }
+
+    const newCompany: Company = {
+      id: trimmedName.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, ""),
+      name: trimmedName,
+      status: "prospect",
+      city: "New",
+      state: "Lead",
+      segment: "Prospect",
+      currentOpportunity: "New prospect. Add opportunity details after first contact.",
+      smartNotes: "",
+      salesLead: "Louie",
+      operationsLead: "Brian",
+      primaryContactId: "",
+      lastContact: "",
+      lastActivity: "Today",
+      active: true,
+      qualifyingQuestions: Object.fromEntries(
+        qualifyingQuestions.map((question) => [question, ""])
+      )
+    };
+
+    setCompanies((currentCompanies) => [newCompany, ...currentCompanies]);
+    setSelectedCompanyId(newCompany.id);
+    setActiveAccountTab("all");
+    setActiveProfileTab("command");
+    setSearchValue(newCompany.name);
+    setProspectName("");
+    setShowProspectForm(false);
+  }
+
+  return (
+    <main className="shell">
+      <section className="topbar" aria-label="Home">
+        <div>
+          <p className="app-label">Blue Bomber Logistics OS</p>
+          <h1>Tasks</h1>
+        </div>
+        <button className="primary-action" type="button" onClick={() => setShowProspectForm(true)}>
+          + Prospect
+        </button>
+      </section>
+
+      {showProspectForm ? (
+        <section className="prospect-form" aria-label="Add prospect">
+          <input
+            autoFocus
+            value={prospectName}
+            onChange={(event) => setProspectName(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                addProspect();
+              }
+            }}
+            placeholder="Company name"
+          />
+          <button type="button" onClick={addProspect}>
+            Add
+          </button>
+          <button type="button" className="ghost" onClick={() => setShowProspectForm(false)}>
+            Cancel
+          </button>
+        </section>
+      ) : null}
+
+      <section className="command-layout">
+        <section className="task-centerpiece" aria-label="Tasks">
+          <div className="task-centerpiece-header">
+            <h2>Open Tasks</h2>
+            <span>{openTasks.length} active</span>
+          </div>
+          <TaskQueue
+            companyNameById={companyNameById(companies)}
+            onSelectTask={selectTask}
+            taskItems={openTasks}
+          />
+        </section>
+
+        <aside className="account-browser" aria-label="Accounts">
+          <div className="tabs compact-tabs" role="tablist" aria-label="Account filter">
+            {accountTabs.map((tab) => (
+              <button
+                aria-selected={activeAccountTab === tab.id}
+                className={activeAccountTab === tab.id ? "active" : ""}
+                key={tab.id}
+                onClick={() => {
+                  setActiveAccountTab(tab.id);
+                  setSearchValue("");
+                  setSelectedCompanyId(null);
+                  setSelectedTaskId(null);
+                }}
+                role="tab"
+                type="button"
+              >
+                {tab.label}
+              </button>
+            ))}
+          </div>
+
+          {activeAccountTab === "carriers" ? (
+            <CarrierPreview carriers={carriers} />
+          ) : (
+            <CompanySearch
+              companies={filteredCompanies}
+              previewCompany={previewCompany}
+              searchValue={searchValue}
+              selectedCompanyId={selectedCompanyId}
+              onSearchChange={setSearchValue}
+              onSelect={selectCompany}
+            />
+          )}
+        </aside>
+      </section>
+
+      {selectedCompany ? (
+        <CompanyProfile
+          activeTab={activeProfileTab}
+          company={selectedCompany}
+          contacts={companyContacts}
+          onSmartNotesChange={(smartNotes) => {
+            setCompanies((currentCompanies) =>
+              currentCompanies.map((company) =>
+                company.id === selectedCompany.id ? { ...company, smartNotes } : company
+              )
+            );
+          }}
+          onAddNote={() => {
+            const latestCompany =
+              companies.find((company) => company.id === selectedCompany.id) ?? selectedCompany;
+            const note = latestCompany.smartNotes.trim();
+
+            if (!note) {
+              return;
+            }
+
+	    const result = applyIntent(latestCompany.smartNotes, latestCompany, contacts);
+        
+	    setCompanies((currentCompanies) =>
+              currentCompanies.map((company) =>
+                company.id === latestCompany.id ? { ...result.company, smartNotes: "" } : company
+              )
+            );
+            setContacts(result.contacts);
+
+            if (result.tasks.length) {
+              setTasks((currentTasks) => [...result.tasks, ...currentTasks]);
+              setSelectedTaskId(result.tasks[0].id);
+            }
+
+            setTimeline((currentTimeline) => [result.timelineEntry, ...currentTimeline]);
+            setNoteResult({
+              tasks: result.tasks.map((task) => ({ title: task.title, owner: task.owner }))
+            });
+            window.setTimeout(() => setNoteResult(null), 5000);
+          }}
+          onTabChange={setActiveProfileTab}
+          tasks={selectedCompanyTasks}
+          timeline={timeline}
+          noteResult={noteResult}
+        />
+      ) : (
+        <section className="profile-empty" aria-label="Company Profile">
+          <h2>Select a task</h2>
+          <p>Company data stays hidden until work requires it.</p>
+        </section>
+      )}
+
+      {selectedTask ? (
+        <TaskDetail task={selectedTask} />
+      ) : null}
+    </main>
+  );
+}
+
+function CompanyProfile({
+  activeTab,
+  company,
+  contacts: companyContacts,
+  tasks: companyTasks,
+  timeline,
+  noteResult,
+  onSmartNotesChange,
+  onAddNote,
+  onTabChange
+}: {
+  activeTab: ProfileTab;
+  company: Company;
+  contacts: typeof seedContacts;
+  tasks: Task[];
+  timeline: typeof seedTimeline;
+  noteResult: { tasks: Array<{ title: string; owner: string }> } | null;
+  onSmartNotesChange: (smartNotes: string) => void;
+  onAddNote: () => void;
+  onTabChange: (tab: ProfileTab) => void;
+}) {
+  return (
+    <section className="profile" aria-label="Company Profile">
+      <div className="profile-header">
+        <div>
+          <span className="snapshot-label">Snapshot</span>
+          <span className="status">{statusLabel(company.status)}</span>
+          <h2>{company.name}</h2>
+          <p>
+            {company.city}, {company.state} · {company.segment}
+          </p>
+        </div>
+        <button className="files-button" type="button">
+          Files
+        </button>
+      </div>
+
+      <div className="tabs profile-tabs" role="tablist" aria-label="Company profile sections">
+        {profileTabs.map((tab) => (
+          <button
+            aria-selected={activeTab === tab.id}
+            className={activeTab === tab.id ? "active" : ""}
+            key={tab.id}
+            onClick={() => onTabChange(tab.id)}
+            role="tab"
+            type="button"
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
+      {activeTab === "command" ? (
+        <CommandTimeline
+          company={company}
+          companyTasks={companyTasks}
+          timeline={timeline}
+          noteResult={noteResult}
+          onSmartNotesChange={onSmartNotesChange}
+          onAddNote={onAddNote}
+        />
+      ) : null}
+
+      {activeTab === "contacts" ? (
+        <Panel title="Contacts (3)">
+          <ul className="contact-list">
+            {companyContacts.map((contact) => (
+              <li key={contact.id}>
+                <strong>{contact.name}</strong>
+                <span>{contact.role}</span>
+                <span>{contact.email}</span>
+                <span>{contact.phone}</span>
+                {contact.lastContact ? <span>Last contact: {contact.lastContact}</span> : null}
+              </li>
+            ))}
+          </ul>
+        </Panel>
+      ) : null}
+
+      {activeTab === "qualify" ? (
+        <Panel title="5 Qualifying Questions">
+          <ol className="question-list">
+            {qualifyingQuestions.map((question) => (
+              <li key={question}>
+                <strong>{question}</strong>
+                <span>{company.qualifyingQuestions[question] || "Not answered yet"}</span>
+              </li>
+            ))}
+          </ol>
+        </Panel>
+      ) : null}
+
+      {activeTab === "snapshot" ? (
+        <div className="profile-grid">
+          <Panel title="Company Snapshot">
+            <dl className="snapshot">
+              <div>
+                <dt>Status</dt>
+                <dd>{statusLabel(company.status)}</dd>
+              </div>
+              <div>
+                <dt>Segment</dt>
+                <dd>{company.segment}</dd>
+              </div>
+              <div>
+                <dt>Location</dt>
+                <dd>
+                  {company.city}, {company.state}
+                </dd>
+              </div>
+              <div>
+                <dt>Sales Lead</dt>
+                <dd>{company.salesLead}</dd>
+              </div>
+              <div>
+                <dt>Operations Lead</dt>
+                <dd>{company.operationsLead}</dd>
+              </div>
+              <div>
+                <dt>Last Contact</dt>
+                <dd>{company.lastContact || "Not set"}</dd>
+              </div>
+              <div>
+                <dt>Last Activity</dt>
+                <dd>{company.lastActivity || "Not set"}</dd>
+              </div>
+            </dl>
+          </Panel>
+
+          <Panel title="Current Opportunity">
+            <p>{company.currentOpportunity}</p>
+          </Panel>
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+function CommandTimeline({
+  company,
+  companyTasks,
+  timeline,
+  noteResult,
+  onSmartNotesChange,
+  onAddNote
+}: {
+  company: Company;
+  companyTasks: Task[];
+  timeline: typeof seedTimeline;
+  noteResult: { tasks: Array<{ title: string; owner: string }> } | null;
+  onSmartNotesChange: (smartNotes: string) => void;
+  onAddNote: () => void;
+}) {
+  const timelineEntries = timeline
+    .filter((entry) => entry.companyId === company.id)
+    .map((entry) => ({
+      id: entry.id,
+      title: entry.at,
+      detail: entry.body,
+      createdAt: entry.createdAt,
+      type: "timeline"
+    }));
+  const taskEntries = [...companyTasks]
+    .sort((firstTask, secondTask) => secondTask.createdAt.localeCompare(firstTask.createdAt))
+    .map((task) => ({
+      id: task.id,
+      title: task.title,
+      detail: `${taskStatusLabel(task.status)} · ${task.due} · Owner: ${task.owner}`,
+      createdAt: task.createdAt,
+      type: "task"
+    }));
+  const timelineRows = [...timelineEntries, ...taskEntries].sort(
+    (firstEntry, secondEntry) => secondEntry.createdAt.localeCompare(firstEntry.createdAt)
+  );
+
+  return (
+    <section className="command-timeline" aria-label="ACTIVITY NOTES">
+      <div className="command-center">
+        <div className="command-center-header">
+          <h3>ACTIVITY NOTES</h3>
+          <p>Type notes naturally. Blue Bomber OS will detect tasks and activities automatically.</p>
+        </div>
+
+        <textarea
+          value={company.smartNotes}
+          onChange={(event) => onSmartNotesChange(event.target.value)}
+          placeholder={`Talked to Aaron today
+
+Need better number
+
+Need new POC
+
+Call back Wednesday
+
+53ft dry vans only
+
+Requested email only`}
+        />
+        <div className="note-actions">
+          <button type="button" onClick={onAddNote}>
+            Add Note
+          </button>
+        </div>
+        {noteResult ? <NoteSavedMessage tasks={noteResult.tasks} /> : null}
+      </div>
+
+      <div className="current-opportunity">
+        <span>Current Opportunity</span>
+        <strong>{company.currentOpportunity}</strong>
+      </div>
+
+      <div className="timeline-stream">
+        <h3>Timeline</h3>
+        {timelineRows.map((entry) => (
+          <div className={entry.type === "task" ? "timeline-item task-event" : "timeline-item"} key={entry.id}>
+            <strong>{entry.title}</strong>
+            <span>{entry.detail}</span>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function Panel({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <section className="panel">
+      <h3>{title}</h3>
+      {children}
+    </section>
+  );
+}
+
+function NoteSavedMessage({ tasks }: { tasks: Array<{ title: string; owner: string }> }) {
+  return (
+    <div className="note-saved" role="status">
+      <strong>✓ Note Saved</strong>
+      {tasks.length ? (
+        <>
+          <span>Tasks Created:</span>
+          <ul>
+            {tasks.map((task) => (
+              <li key={`${task.title}-${task.owner}`}>
+                {task.title} ({task.owner})
+              </li>
+            ))}
+          </ul>
+        </>
+      ) : (
+        <span>No tasks created.</span>
+      )}
+    </div>
+  );
+}
+
+function CompanySearch({
+  companies,
+  previewCompany,
+  searchValue,
+  selectedCompanyId,
+  onSearchChange,
+  onSelect
+}: {
+  companies: Company[];
+  previewCompany: Company | null;
+  searchValue: string;
+  selectedCompanyId: string | null;
+  onSearchChange: (value: string) => void;
+  onSelect: (companyId: string) => void;
+}) {
+  return (
+    <div className="company-picker">
+      <label htmlFor="company-search">Search Companies</label>
+      <input
+        id="company-search"
+        list="company-options"
+        onChange={(event) => {
+          const value = event.target.value;
+          onSearchChange(value);
+          const match = companies.find((company) => company.name === value);
+
+          if (match) {
+            onSelect(match.id);
+          }
+        }}
+        placeholder="Search Companies"
+        value={searchValue}
+      />
+      <datalist id="company-options">
+        {companies.map((company) => (
+          <option key={company.id} value={company.name} />
+        ))}
+      </datalist>
+
+      {previewCompany ? (
+        <button
+          className={previewCompany.id === selectedCompanyId ? "company-preview selected" : "company-preview"}
+          type="button"
+          onClick={() => onSelect(previewCompany.id)}
+        >
+          <span>{statusLabel(previewCompany.status)}</span>
+          <strong>{previewCompany.name}</strong>
+          <small>
+            {previewCompany.city}, {previewCompany.state}
+          </small>
+        </button>
+      ) : (
+        <div className="company-preview empty-preview">No company selected.</div>
+      )}
+    </div>
+  );
+}
+
+function CarrierPreview({ carriers: carrierItems }: { carriers: Carrier[] }) {
+  const previewCarrier = carrierItems[0];
+
+  return (
+    <div className="company-picker">
+      <label htmlFor="carrier-search">Search Companies</label>
+      <input id="carrier-search" list="carrier-options" placeholder="Search Carriers" />
+      <datalist id="carrier-options">
+        {carrierItems.map((carrier) => (
+          <option key={carrier.id} value={carrier.name} />
+        ))}
+      </datalist>
+
+      <div className="company-preview">
+        <span>Carrier</span>
+        <strong>{previewCarrier.name}</strong>
+        <small>
+          {previewCarrier.city}, {previewCarrier.state} · {previewCarrier.equipment}
+        </small>
+      </div>
+    </div>
+  );
+}
+
+function TaskDetail({ task }: { task: Task }) {
+  return (
+    <section className="task-detail" aria-label="Task Detail">
+      <h2>Task Detail</h2>
+      <dl>
+        <div>
+          <dt>Task Name</dt>
+          <dd>{task.title}</dd>
+        </div>
+        <div>
+          <dt>Assigned To</dt>
+          <dd>{task.owner}</dd>
+        </div>
+        <div>
+          <dt>Status</dt>
+          <dd>{taskStatusLabel(task.status)}</dd>
+        </div>
+        <div>
+          <dt>Company</dt>
+          <dd>{task.sourceCompany}</dd>
+        </div>
+        <div>
+          <dt>Created Date</dt>
+          <dd>{formatDate(task.createdAt)}</dd>
+        </div>
+        <div className="source-note-row">
+          <dt>Source Note</dt>
+          <dd>{task.sourceNote}</dd>
+        </div>
+      </dl>
+    </section>
+  );
+}
+
+function TaskQueue({
+  taskItems,
+  companyNameById,
+  onSelectTask
+}: {
+  taskItems: Task[];
+  companyNameById: Record<string, string>;
+  onSelectTask: (task: Task) => void;
+}) {
+  if (!taskItems.length) {
+    return <p className="empty">No tasks here.</p>;
+  }
+
+  return (
+    <ul className="task-list">
+      {taskItems.map((task) => (
+        <li key={task.id}>
+          <button type="button" onClick={() => onSelectTask(task)}>
+            <span className={task.priority === "high" ? "task-dot high" : "task-dot"} />
+            <div>
+              <strong>{task.title}</strong>
+              <span>
+                {companyNameById[task.companyId]} · {task.due} · {task.owner}
+              </span>
+            </div>
+          </button>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function companyNameById(companyItems: Company[]) {
+  return Object.fromEntries(companyItems.map((company) => [company.id, company.name]));
+}
+
+function formatDate(value: string) {
+  return new Intl.DateTimeFormat("en-US", {
+    month: "2-digit",
+    day: "2-digit",
+    year: "numeric"
+  }).format(new Date(value));
+}

@@ -15,3 +15,14 @@ Phase 1 Scope:
 - Tasks
 - Timeline
 - Smart Notes
+
+## Run locally
+
+```bash
+npm install
+npm run dev
+```
+
+Open `http://localhost:3000`.
+
+Supabase environment values are listed in `.env.example`. Phase 1 includes the Supabase client and database schema, while the UI uses local seed data so the first screen stays fast.
