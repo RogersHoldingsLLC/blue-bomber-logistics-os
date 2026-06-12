@@ -11,6 +11,7 @@ import {
 } from "@/lib/data";
 import { applyIntent } from "@/lib/intent-engine";
 import { loadStoredState, saveStoredState } from "@/lib/storage";
+import { canUseSupabase, loadSupabaseState, saveSupabaseState } from "@/lib/supabase-storage";
 import type { AccountTab, Carrier, Company, CompanyStatus, Task } from "@/types";
 
 type ProfileTab = "command" | "contacts" | "qualify" | "snapshot";
@@ -56,17 +57,58 @@ export default function Home() {
   );
 
   useEffect(() => {
-    const storedState = loadStoredState();
+    let isMounted = true;
 
-    if (storedState) {
-      setCompanies(storedState.companies);
-      setContacts(storedState.contacts);
-      setTasks(storedState.tasks);
-      setTimeline(storedState.timeline);
-      setCarrierItems(storedState.carriers.length ? storedState.carriers : seedCarriers);
+    async function hydrateState() {
+      try {
+        const supabaseAvailable = canUseSupabase();
+        console.log("[Blue Bomber Supabase] client available:", supabaseAvailable);
+
+        if (!supabaseAvailable) {
+          const storedState = loadStoredState();
+
+          if (storedState && isMounted) {
+            setCompanies(storedState.companies);
+            setContacts(storedState.contacts);
+            setTasks(storedState.tasks);
+            setTimeline(storedState.timeline);
+            setCarrierItems(storedState.carriers.length ? storedState.carriers : seedCarriers);
+          }
+
+          return;
+        }
+
+        const supabaseState = await loadSupabaseState();
+
+        if (supabaseState && isMounted) {
+          setCompanies(supabaseState.companies);
+          setContacts(supabaseState.contacts);
+          setTasks(supabaseState.tasks);
+          setTimeline(supabaseState.timeline);
+          setCarrierItems(supabaseState.carriers.length ? supabaseState.carriers : seedCarriers);
+        }
+      } catch {
+        const storedState = loadStoredState();
+
+        if (storedState && isMounted) {
+          setCompanies(storedState.companies);
+          setContacts(storedState.contacts);
+          setTasks(storedState.tasks);
+          setTimeline(storedState.timeline);
+          setCarrierItems(storedState.carriers.length ? storedState.carriers : seedCarriers);
+        }
+      } finally {
+        if (isMounted) {
+          setHasHydratedStorage(true);
+        }
+      }
     }
 
-    setHasHydratedStorage(true);
+    hydrateState();
+
+    return () => {
+      isMounted = false;
+    };
   }, []);
 
   useEffect(() => {
@@ -74,7 +116,7 @@ export default function Home() {
       return;
     }
 
-    saveStoredState({
+    persistState({
       companies,
       contacts,
       tasks,
@@ -139,20 +181,46 @@ export default function Home() {
     setActiveProfileTab("command");
   }
 
+  async function persistStateToStorage(state: {
+    companies: typeof companies;
+    contacts: typeof contacts;
+    tasks: typeof tasks;
+    timeline: typeof timeline;
+    carriers: typeof carrierItems;
+  }, reason: string) {
+    console.log("[Blue Bomber Supabase] persist requested:", reason);
+    console.log("[Blue Bomber Supabase] client available:", canUseSupabase());
+
+    try {
+      const savedToSupabase = await saveSupabaseState(state);
+
+      if (!savedToSupabase) {
+        console.log("[Blue Bomber Supabase] localStorage fallback used:", reason);
+        saveStoredState(state);
+      }
+    } catch (error) {
+      console.error("[Blue Bomber Supabase] localStorage fallback after Supabase error:", {
+        reason,
+        error: error instanceof Error ? error.message : error
+      });
+      saveStoredState(state);
+    }
+  }
+
   function persistState(overrides: {
     companies?: typeof companies;
     contacts?: typeof contacts;
     tasks?: typeof tasks;
     timeline?: typeof timeline;
     carriers?: typeof carrierItems;
-  }) {
-    saveStoredState({
+  }, reason = "state change") {
+    void persistStateToStorage({
       companies: overrides.companies ?? companies,
       contacts: overrides.contacts ?? contacts,
       tasks: overrides.tasks ?? tasks,
       timeline: overrides.timeline ?? timeline,
       carriers: overrides.carriers ?? carrierItems
-    });
+    }, reason);
   }
 
   function addProspect() {
@@ -163,7 +231,7 @@ export default function Home() {
     }
 
     const newCompany: Company = {
-      id: trimmedName.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, ""),
+      id: crypto.randomUUID(),
       name: trimmedName,
       status: "prospect",
       city: "New",
@@ -185,7 +253,7 @@ export default function Home() {
     const nextCompanies = [newCompany, ...companies];
 
     setCompanies(nextCompanies);
-    persistState({ companies: nextCompanies });
+    persistState({ companies: nextCompanies }, "creating company");
     setSelectedCompanyId(newCompany.id);
     setActiveAccountTab("all");
     setActiveProfileTab("command");
@@ -289,7 +357,7 @@ export default function Home() {
                   company.id === selectedCompany.id ? { ...company, smartNotes } : company
                 );
 
-                persistState({ companies: nextCompanies });
+                persistState({ companies: nextCompanies }, "updating Activity Notes");
 
                 return nextCompanies;
               }
@@ -325,7 +393,7 @@ export default function Home() {
               contacts: result.contacts,
               tasks: nextTasks,
               timeline: nextTimeline
-            });
+            }, result.tasks.length ? "adding note and generating task" : "adding note");
             setNoteResult({
               tasks: result.tasks.map((task) => ({ title: task.title, owner: task.owner }))
             });

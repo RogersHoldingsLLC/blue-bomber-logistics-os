@@ -10,7 +10,7 @@ export const qualifyingQuestions = [
 
 export const companies: Company[] = [
   {
-    id: "midwest-cold-storage",
+    id: "11111111-1111-4111-8111-111111111111",
     name: "Midwest Cold Storage",
     status: "prospect",
     city: "Columbus",
@@ -20,7 +20,7 @@ export const companies: Company[] = [
     smartNotes: "Purchasing wants fewer missed pickup windows. Follow up after rate review.",
     salesLead: "Louie",
     operationsLead: "Brian",
-    primaryContactId: "dana-ellis",
+    primaryContactId: "11111111-1111-4111-8111-111111111101",
     lastContact: "Today",
     lastActivity: "Today",
     active: true,
@@ -33,7 +33,7 @@ export const companies: Company[] = [
     }
   },
   {
-    id: "lakefront-building-supply",
+    id: "22222222-2222-4222-8222-222222222222",
     name: "Lakefront Building Supply",
     status: "prospect",
     city: "Erie",
@@ -43,7 +43,7 @@ export const companies: Company[] = [
     smartNotes: "Needs fast check-ins, not a long sales pitch.",
     salesLead: "Louie",
     operationsLead: "Brian",
-    primaryContactId: "marcus-clay",
+    primaryContactId: "22222222-2222-4222-8222-222222222201",
     lastContact: "Yesterday",
     lastActivity: "Yesterday",
     active: true,
@@ -56,7 +56,7 @@ export const companies: Company[] = [
     }
   },
   {
-    id: "riverside-foods",
+    id: "33333333-3333-4333-8333-333333333333",
     name: "Riverside Foods",
     status: "customer",
     city: "Louisville",
@@ -66,7 +66,7 @@ export const companies: Company[] = [
     smartNotes: "Customer likes concise summaries and shipment exceptions only.",
     salesLead: "Louie",
     operationsLead: "Brian",
-    primaryContactId: "nina-patel",
+    primaryContactId: "33333333-3333-4333-8333-333333333301",
     lastContact: "Monday",
     lastActivity: "Monday",
     active: true,
@@ -82,8 +82,8 @@ export const companies: Company[] = [
 
 export const contacts: Contact[] = [
   {
-    id: "dana-ellis",
-    companyId: "midwest-cold-storage",
+    id: "11111111-1111-4111-8111-111111111101",
+    companyId: "11111111-1111-4111-8111-111111111111",
     name: "Dana Ellis",
     role: "Operations Purchasing",
     email: "dana@midwestcold.example",
@@ -91,24 +91,24 @@ export const contacts: Contact[] = [
     lastContact: "Today"
   },
   {
-    id: "rob-miller",
-    companyId: "midwest-cold-storage",
+    id: "11111111-1111-4111-8111-111111111102",
+    companyId: "11111111-1111-4111-8111-111111111111",
     name: "Rob Miller",
     role: "Shipping Manager",
     email: "rob@midwestcold.example",
     phone: "(614) 555-0180"
   },
   {
-    id: "tess-grant",
-    companyId: "midwest-cold-storage",
+    id: "11111111-1111-4111-8111-111111111103",
+    companyId: "11111111-1111-4111-8111-111111111111",
     name: "Tess Grant",
     role: "Accounts Payable",
     email: "tess@midwestcold.example",
     phone: "(614) 555-0128"
   },
   {
-    id: "marcus-clay",
-    companyId: "lakefront-building-supply",
+    id: "22222222-2222-4222-8222-222222222201",
+    companyId: "22222222-2222-4222-8222-222222222222",
     name: "Marcus Clay",
     role: "Purchasing Lead",
     email: "marcus@lakefront.example",
@@ -116,16 +116,16 @@ export const contacts: Contact[] = [
     lastContact: "Yesterday"
   },
   {
-    id: "sarah-james",
-    companyId: "lakefront-building-supply",
+    id: "22222222-2222-4222-8222-222222222202",
+    companyId: "22222222-2222-4222-8222-222222222222",
     name: "Sarah James",
     role: "Warehouse Manager",
     email: "sarah@lakefront.example",
     phone: "(814) 555-0169"
   },
   {
-    id: "nina-patel",
-    companyId: "riverside-foods",
+    id: "33333333-3333-4333-8333-333333333301",
+    companyId: "33333333-3333-4333-8333-333333333333",
     name: "Nina Patel",
     role: "Logistics Director",
     email: "nina@riverside.example",
@@ -133,16 +133,16 @@ export const contacts: Contact[] = [
     lastContact: "Monday"
   },
   {
-    id: "owen-fox",
-    companyId: "riverside-foods",
+    id: "33333333-3333-4333-8333-333333333302",
+    companyId: "33333333-3333-4333-8333-333333333333",
     name: "Owen Fox",
     role: "Plant Manager",
     email: "owen@riverside.example",
     phone: "(502) 555-0122"
   },
   {
-    id: "maria-lopez",
-    companyId: "riverside-foods",
+    id: "33333333-3333-4333-8333-333333333303",
+    companyId: "33333333-3333-4333-8333-333333333333",
     name: "Maria Lopez",
     role: "Accounts Payable",
     email: "maria@riverside.example",
@@ -152,8 +152,8 @@ export const contacts: Contact[] = [
 
 export const tasks: Task[] = [
   {
-    id: "task-1",
-    companyId: "midwest-cold-storage",
+    id: "44444444-4444-4444-8444-444444444401",
+    companyId: "11111111-1111-4111-8111-111111111111",
     title: "Send Columbus to Nashville lane estimate",
     due: "Today",
     priority: "high",
@@ -165,8 +165,8 @@ export const tasks: Task[] = [
     sourceNote: "Initial lane estimate needed for Columbus to Nashville."
   },
   {
-    id: "task-2",
-    companyId: "lakefront-building-supply",
+    id: "44444444-4444-4444-8444-444444444402",
+    companyId: "22222222-2222-4222-8222-222222222222",
     title: "Call Marcus about month-end flatbed needs",
     due: "Tomorrow",
     priority: "normal",
@@ -178,8 +178,8 @@ export const tasks: Task[] = [
     sourceNote: "Marcus has month-end flatbed needs."
   },
   {
-    id: "task-3",
-    companyId: "riverside-foods",
+    id: "44444444-4444-4444-8444-444444444403",
+    companyId: "33333333-3333-4333-8333-333333333333",
     title: "Confirm next outbound pickup schedule",
     due: "Friday",
     priority: "normal",
@@ -191,8 +191,8 @@ export const tasks: Task[] = [
     sourceNote: "Confirm next outbound pickup schedule."
   },
   {
-    id: "task-4",
-    companyId: "midwest-cold-storage",
+    id: "44444444-4444-4444-8444-444444444404",
+    companyId: "11111111-1111-4111-8111-111111111111",
     title: "Confirm Dana approved service cadence",
     due: "Next",
     priority: "normal",
@@ -207,14 +207,14 @@ export const tasks: Task[] = [
 
 export const carriers: Carrier[] = [
   {
-    id: "buckeye-transport",
+    id: "55555555-5555-4555-8555-555555555501",
     name: "Buckeye Transport",
     city: "Dayton",
     state: "OH",
     equipment: "Dry van"
   },
   {
-    id: "bluegrass-flatbed",
+    id: "55555555-5555-4555-8555-555555555502",
     name: "Bluegrass Flatbed",
     city: "Lexington",
     state: "KY",
@@ -224,22 +224,22 @@ export const carriers: Carrier[] = [
 
 export const timeline: TimelineEntry[] = [
   {
-    id: "timeline-1",
-    companyId: "midwest-cold-storage",
+    id: "66666666-6666-4666-8666-666666666601",
+    companyId: "11111111-1111-4111-8111-111111111111",
     at: "Today",
     body: "Dana asked for a tighter pickup communication process.",
     createdAt: "2026-06-11T09:00:00.000Z"
   },
   {
-    id: "timeline-2",
-    companyId: "lakefront-building-supply",
+    id: "66666666-6666-4666-8666-666666666602",
+    companyId: "22222222-2222-4222-8222-222222222222",
     at: "Yesterday",
     body: "Marcus shared two possible recurring flatbed lanes.",
     createdAt: "2026-06-10T10:30:00.000Z"
   },
   {
-    id: "timeline-3",
-    companyId: "riverside-foods",
+    id: "66666666-6666-4666-8666-666666666603",
+    companyId: "33333333-3333-4333-8333-333333333333",
     at: "Monday",
     body: "Nina requested overflow pricing before peak volume.",
     createdAt: "2026-06-08T14:15:00.000Z"

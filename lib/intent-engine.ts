@@ -133,7 +133,7 @@ export function applyIntent(
   const timestamp = now.toISOString();
   const today = "Today";
   const timelineEntry: TimelineEntry = {
-    id: `timeline-${timestamp}`,
+    id: crypto.randomUUID(),
     companyId: company.id,
     at: today,
     body: note,
@@ -156,7 +156,7 @@ export function applyIntent(
       return [
         ...uniqueTasks,
         {
-          id: `task-${timestamp}-${uniqueTasks.length}`,
+          id: crypto.randomUUID(),
           companyId: company.id,
           title: taskRule.taskName,
           due: taskRule.match === "call monday" ? "Monday" : "Next",
