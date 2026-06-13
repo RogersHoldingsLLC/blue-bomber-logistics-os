@@ -4,6 +4,8 @@ export type AccountTab = "all" | "prospects" | "customers" | "carriers";
 
 export type TaskStatus = "open" | "done";
 
+export type TaskEntityType = "prospect" | "customer" | "carrier";
+
 export type Contact = {
   id: string;
   companyId: string;
@@ -17,6 +19,8 @@ export type Contact = {
 export type Task = {
   id: string;
   companyId: string;
+  entityId?: string;
+  entityType?: TaskEntityType;
   title: string;
   due: string;
   priority: "critical" | "high" | "normal" | "low";

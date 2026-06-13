@@ -39,7 +39,10 @@ create table if not exists contacts (
 
 create table if not exists tasks (
   id uuid primary key default gen_random_uuid(),
-  company_id uuid not null references companies(id) on delete cascade,
+  company_id uuid references companies(id) on delete cascade,
+  carrier_id uuid references carriers(id) on delete cascade,
+  entity_id uuid,
+  entity_type text not null default 'prospect' check (entity_type in ('prospect', 'customer', 'carrier')),
   title text not null,
   due text,
   priority text not null default 'normal' check (priority in ('critical', 'high', 'normal', 'low')),
@@ -49,7 +52,11 @@ create table if not exists tasks (
   source_company text not null,
   source_note text not null,
   completed_at timestamptz,
-  created_at timestamptz not null default now()
+  created_at timestamptz not null default now(),
+  check (
+    (entity_type in ('prospect', 'customer') and company_id is not null) or
+    (entity_type = 'carrier' and carrier_id is not null)
+  )
 );
 
 create table if not exists timeline (

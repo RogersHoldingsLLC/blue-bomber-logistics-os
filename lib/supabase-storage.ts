@@ -40,7 +40,10 @@ type ContactRow = {
 
 type TaskRow = {
   id: string;
-  company_id: string;
+  company_id: string | null;
+  carrier_id?: string | null;
+  entity_id?: string | null;
+  entity_type?: Task["entityType"];
   title: string;
   due: string | null;
   priority: Task["priority"];
@@ -131,7 +134,12 @@ export async function saveSupabaseState(state: StoredBlueBomberState) {
   const companies = state.companies.map(toCompanyRow);
   const carriers = state.carriers.map(toCarrierRow);
   const contacts = state.contacts.map(toContactRow);
-  const tasks = state.tasks.map(toTaskRow);
+  const companyTasks = state.tasks
+    .filter((task) => task.entityType !== "carrier")
+    .map(toTaskRow);
+  const carrierTasks = state.tasks
+    .filter((task) => task.entityType === "carrier")
+    .map(toCarrierTaskRow);
   const timeline = state.timeline.map(toTimelineRow);
 
   const companyResult = companies.length
@@ -170,13 +178,24 @@ export async function saveSupabaseState(state: StoredBlueBomberState) {
     throw contactResult.error;
   }
 
-  const taskResult = tasks.length
-    ? await supabase.from("tasks").upsert(tasks, { onConflict: "id" })
+  const taskResult = companyTasks.length
+    ? await supabase.from("tasks").upsert(companyTasks, { onConflict: "id" })
     : { error: null };
 
   if (taskResult.error) {
     console.error("[Blue Bomber Supabase] save to Supabase failed at tasks:", formatSupabaseError(taskResult.error));
     throw taskResult.error;
+  }
+
+  if (carrierTasks.length) {
+    const carrierTaskResult = await supabase.from("tasks").upsert(carrierTasks, { onConflict: "id" });
+
+    if (carrierTaskResult.error) {
+      console.warn(
+        "[Blue Bomber Supabase] carrier task save skipped; schema may need carrier task columns:",
+        formatSupabaseError(carrierTaskResult.error)
+      );
+    }
   }
 
   const timelineResult = timeline.length
@@ -390,10 +409,35 @@ function toTaskRow(task: Task): TaskRow {
   };
 }
 
+function toCarrierTaskRow(task: Task): TaskRow {
+  return {
+    id: task.id,
+    company_id: null,
+    carrier_id: task.entityId ?? task.companyId,
+    entity_id: task.entityId ?? task.companyId,
+    entity_type: "carrier",
+    title: task.title,
+    due: task.due || null,
+    priority: task.priority,
+    status: task.status,
+    owner: task.owner,
+    created_by: task.createdBy,
+    source_company: task.sourceCompany,
+    source_note: task.sourceNote,
+    completed_at: task.completedAt ?? null,
+    created_at: task.createdAt
+  };
+}
+
 function fromTaskRow(row: TaskRow): Task {
+  const entityType = row.entity_type;
+  const entityId = row.entity_id ?? row.carrier_id ?? row.company_id ?? "";
+
   return {
     id: row.id,
-    companyId: row.company_id,
+    companyId: entityId,
+    entityId,
+    entityType,
     title: row.title,
     due: row.due ?? "",
     priority: row.priority,

@@ -88,6 +88,33 @@ button {
   gap: 10px;
 }
 
+.view-nav {
+  background: var(--surface-muted);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+}
+
+.view-nav button {
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 800;
+  min-height: 32px;
+  padding: 0 10px;
+}
+
+.view-nav button.active,
+.view-nav button:hover {
+  background: var(--surface);
+  border-color: var(--border);
+  color: var(--text);
+}
+
 .theme-toggle {
   background: var(--surface-muted);
   border: 1px solid var(--border);
@@ -217,6 +244,10 @@ h1 {
   padding: 18px;
 }
 
+.home-tasks {
+  min-height: 620px;
+}
+
 .task-centerpiece-header {
   align-items: baseline;
   display: flex;
@@ -233,6 +264,11 @@ h1 {
   color: var(--muted);
   font-size: 13px;
   font-weight: 700;
+}
+
+.task-filter-tabs {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  margin-bottom: 14px;
 }
 
 .account-browser {
@@ -344,6 +380,12 @@ h1 {
   grid-template-columns: 1fr;
 }
 
+.bulk-actions.horizontal {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+}
+
 .bulk-actions span {
   color: var(--muted);
   font-size: 12px;
@@ -414,6 +456,93 @@ h1 {
   white-space: nowrap;
 }
 
+.list-page {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+}
+
+.list-header {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+}
+
+.list-header h2 {
+  font-size: 20px;
+  line-height: 1.2;
+  margin: 0 0 3px;
+}
+
+.list-header span,
+.record-list small {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.list-bulk-control {
+  background: var(--surface-muted);
+}
+
+.record-list {
+  display: grid;
+  gap: 8px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.record-list li {
+  align-items: center;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: auto minmax(0, 1fr);
+}
+
+.record-list li:has(> button:first-child) {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.record-list input {
+  margin: 0;
+}
+
+.record-list button {
+  align-items: flex-start;
+  background: var(--input-surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  display: grid;
+  gap: 4px;
+  min-height: 78px;
+  padding: 12px;
+  text-align: left;
+  width: 100%;
+}
+
+.record-list button:hover {
+  background: var(--surface-raised);
+  border-color: var(--border-focus);
+}
+
+.record-list span {
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.record-list strong {
+  font-size: 16px;
+  line-height: 1.25;
+}
+
 .company-picker label {
   color: var(--muted);
   font-size: 12px;
@@ -468,22 +597,56 @@ button.company-preview:hover {
   font-size: 13px;
 }
 
-.task-list button {
+.task-card {
   align-items: flex-start;
   background: var(--input-surface);
   border: 1px solid var(--border-strong);
   border-radius: 8px;
   color: var(--text);
-  display: flex;
+  display: grid;
   gap: 14px;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   min-height: 82px;
   padding: 16px;
   text-align: left;
   width: 100%;
 }
 
-.task-list button:hover {
+.task-card:hover,
+.task-card.selected {
   background: var(--surface-raised);
+  border-color: var(--border-focus);
+}
+
+.task-entity-link {
+  background: transparent;
+  border: 0;
+  color: var(--accent);
+  cursor: pointer;
+  font-size: inherit;
+  font-weight: 800;
+  padding: 0;
+  text-align: left;
+}
+
+.task-entity-link:hover {
+  text-decoration: underline;
+}
+
+.task-detail-button {
+  align-self: center;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 800;
+  min-height: 34px;
+  padding: 0 10px;
+  white-space: nowrap;
+}
+
+.task-detail-button:hover {
   border-color: var(--border-focus);
 }
 
@@ -830,9 +993,15 @@ textarea {
     font-size: 24px;
   }
 
-  .task-list button {
+  .task-card {
+    grid-template-columns: auto minmax(0, 1fr);
     min-height: 72px;
     padding: 13px;
+  }
+
+  .task-detail-button {
+    grid-column: 2;
+    justify-self: start;
   }
 
   .task-list strong {

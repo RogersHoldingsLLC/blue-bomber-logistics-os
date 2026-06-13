@@ -154,6 +154,8 @@ export const tasks: Task[] = [
   {
     id: "44444444-4444-4444-8444-444444444401",
     companyId: "11111111-1111-4111-8111-111111111111",
+    entityId: "11111111-1111-4111-8111-111111111111",
+    entityType: "prospect",
     title: "Send Columbus to Nashville lane estimate",
     due: "Today",
     priority: "high",
@@ -167,6 +169,8 @@ export const tasks: Task[] = [
   {
     id: "44444444-4444-4444-8444-444444444402",
     companyId: "22222222-2222-4222-8222-222222222222",
+    entityId: "22222222-2222-4222-8222-222222222222",
+    entityType: "prospect",
     title: "Call Marcus about month-end flatbed needs",
     due: "Tomorrow",
     priority: "normal",
@@ -180,6 +184,8 @@ export const tasks: Task[] = [
   {
     id: "44444444-4444-4444-8444-444444444403",
     companyId: "33333333-3333-4333-8333-333333333333",
+    entityId: "33333333-3333-4333-8333-333333333333",
+    entityType: "customer",
     title: "Confirm next outbound pickup schedule",
     due: "Friday",
     priority: "normal",
@@ -193,6 +199,8 @@ export const tasks: Task[] = [
   {
     id: "44444444-4444-4444-8444-444444444404",
     companyId: "11111111-1111-4111-8111-111111111111",
+    entityId: "11111111-1111-4111-8111-111111111111",
+    entityType: "prospect",
     title: "Confirm Dana approved service cadence",
     due: "Next",
     priority: "normal",

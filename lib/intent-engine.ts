@@ -1,4 +1,4 @@
-import type { Company, Contact, Task, TimelineEntry } from "@/types";
+import type { Carrier, Company, Contact, Task, TimelineEntry } from "@/types";
 import { createUuid } from "@/lib/uuid";
 
 type IntentOwner = "sales" | "operations";
@@ -16,11 +16,21 @@ type ActivityIntentRule = {
   updatesStatusToCustomer?: boolean;
 };
 
+type CarrierTaskIntentRule = {
+  match: string;
+  taskName: string;
+  priority: Task["priority"];
+};
+
 export type IntentResult = {
   company: Company;
   contacts: Contact[];
   tasks: Task[];
   timelineEntry: TimelineEntry;
+};
+
+export type CarrierIntentResult = {
+  tasks: Task[];
 };
 
 const taskIntentRules: TaskIntentRule[] = [
@@ -124,6 +134,44 @@ const activityIntentRules: ActivityIntentRule[] = [
   }
 ];
 
+const carrierTaskIntentRules: CarrierTaskIntentRule[] = [
+  {
+    match: "need coi",
+    taskName: "Get Updated COI",
+    priority: "high"
+  },
+  {
+    match: "need w9",
+    taskName: "Get W9",
+    priority: "normal"
+  },
+  {
+    match: "need noa",
+    taskName: "Get NOA",
+    priority: "normal"
+  },
+  {
+    match: "check availability",
+    taskName: "Check Availability",
+    priority: "normal"
+  },
+  {
+    match: "send load details",
+    taskName: "Send Load Details",
+    priority: "normal"
+  },
+  {
+    match: "confirm pickup",
+    taskName: "Confirm Pickup",
+    priority: "high"
+  },
+  {
+    match: "confirm delivery",
+    taskName: "Confirm Delivery",
+    priority: "high"
+  }
+];
+
 export function applyIntent(
   note: string,
   company: Company,
@@ -159,6 +207,8 @@ export function applyIntent(
         {
           id: createUuid(),
           companyId: company.id,
+          entityId: company.id,
+          entityType: company.status,
           title: taskRule.taskName,
           due: taskRule.match === "call monday" ? "Monday" : "Next",
           priority: taskRule.priority,
@@ -216,6 +266,46 @@ export function applyIntent(
     contacts,
     tasks: [],
     timelineEntry
+  };
+}
+
+export function applyCarrierIntent(note: string, carrier: Carrier, now = new Date()): CarrierIntentResult {
+  const normalizedNote = note.trim().toLowerCase();
+  const timestamp = now.toISOString();
+  const matchedTaskRules = carrierTaskIntentRules.filter((rule) => normalizedNote.includes(rule.match));
+
+  const generatedTasks = matchedTaskRules.reduce<Task[]>((uniqueTasks, taskRule) => {
+    const dedupeKey = `${taskRule.taskName}-${carrier.id}-${note}`;
+    const hasDuplicate = uniqueTasks.some(
+      (task) => `${task.title}-${task.entityId ?? task.companyId}-${task.sourceNote}` === dedupeKey
+    );
+
+    if (hasDuplicate) {
+      return uniqueTasks;
+    }
+
+    return [
+      ...uniqueTasks,
+      {
+        id: createUuid(),
+        companyId: carrier.id,
+        entityId: carrier.id,
+        entityType: "carrier",
+        title: taskRule.taskName,
+        due: "Today",
+        priority: taskRule.priority,
+        status: "open",
+        createdAt: timestamp,
+        owner: "Brian",
+        createdBy: "Blue Bomber OS",
+        sourceCompany: carrier.name,
+        sourceNote: note
+      }
+    ];
+  }, []);
+
+  return {
+    tasks: generatedTasks
   };
 }
 

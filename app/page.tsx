@@ -10,7 +10,7 @@ import {
   tasks as seedTasks,
   timeline as seedTimeline
 } from "@/lib/data";
-import { applyIntent } from "@/lib/intent-engine";
+import { applyCarrierIntent, applyIntent } from "@/lib/intent-engine";
 import { loadStoredState, saveStoredState } from "@/lib/storage";
 import {
   canUseSupabase,
@@ -21,10 +21,20 @@ import {
   saveSupabaseState
 } from "@/lib/supabase-storage";
 import { createUuid } from "@/lib/uuid";
-import type { AccountTab, Carrier, Company, CompanyStatus, Contact, Task } from "@/types";
+import type { Carrier, Company, CompanyStatus, Contact, Task } from "@/types";
 
 type ProfileTab = "command" | "contacts" | "qualify" | "snapshot";
 type ThemeMode = "light" | "dark";
+type AppView =
+  | "home"
+  | "prospects"
+  | "customers"
+  | "carriers"
+  | "prospect-profile"
+  | "customer-profile"
+  | "carrier-profile";
+type TaskFilter = "today" | "overdue" | "upcoming" | "all" | "completed";
+type AccountTab = "all" | "prospects" | "customers" | "carriers";
 type ProspectImportRow = {
   companyName: string;
   status: CompanyStatus;
@@ -38,11 +48,12 @@ type ProspectImportRow = {
 
 const THEME_STORAGE_KEY = "blue-bomber-theme";
 
-const accountTabs: Array<{ id: AccountTab; label: string }> = [
+const taskFilters: Array<{ id: TaskFilter; label: string }> = [
+  { id: "today", label: "Today" },
+  { id: "overdue", label: "Overdue" },
+  { id: "upcoming", label: "Upcoming" },
   { id: "all", label: "All" },
-  { id: "prospects", label: "Prospects" },
-  { id: "customers", label: "Customers" },
-  { id: "carriers", label: "Carriers" }
+  { id: "completed", label: "Completed" }
 ];
 
 const profileTabs: Array<{ id: ProfileTab; label: string }> = [
@@ -68,12 +79,14 @@ export default function Home() {
   const [carrierItems, setCarrierItems] = useState(seedCarriers);
   const [hasHydratedStorage, setHasHydratedStorage] = useState(false);
   const [selectedCompanyId, setSelectedCompanyId] = useState<string | null>(null);
+  const [selectedCarrierId, setSelectedCarrierId] = useState<string | null>(null);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
-  const [activeAccountTab, setActiveAccountTab] = useState<AccountTab>("all");
+  const [currentView, setCurrentView] = useState<AppView>("home");
+  const [taskFilter, setTaskFilter] = useState<TaskFilter>("today");
   const [activeProfileTab, setActiveProfileTab] = useState<ProfileTab>("command");
   const [showProspectForm, setShowProspectForm] = useState(false);
   const [prospectName, setProspectName] = useState("");
-  const [searchValue, setSearchValue] = useState("");
+  const [carrierNote, setCarrierNote] = useState("");
   const [themeMode, setThemeMode] = useState<ThemeMode>("light");
   const [hasHydratedTheme, setHasHydratedTheme] = useState(false);
   const [importResult, setImportResult] = useState<{ imported: number; skipped: number } | null>(null);
@@ -127,9 +140,16 @@ export default function Home() {
         const supabaseState = await loadSupabaseState();
 
         if (supabaseState && isMounted) {
+          const storedState = loadStoredState();
+          const storedCarrierTasks = storedState?.tasks.filter((task) => task.entityType === "carrier") ?? [];
+          const supabaseTaskIds = new Set(supabaseState.tasks.map((task) => task.id));
+
           setCompanies(supabaseState.companies);
           setContacts(supabaseState.contacts);
-          setTasks(supabaseState.tasks);
+          setTasks([
+            ...supabaseState.tasks,
+            ...storedCarrierTasks.filter((task) => !supabaseTaskIds.has(task.id))
+          ]);
           setTimeline(supabaseState.timeline);
           setCarrierItems(supabaseState.carriers);
         }
@@ -179,6 +199,10 @@ export default function Home() {
     () => tasks.find((task) => task.id === selectedTaskId) ?? null,
     [selectedTaskId, tasks]
   );
+  const selectedCarrier = useMemo(
+    () => carrierItems.find((carrier) => carrier.id === selectedCarrierId) ?? null,
+    [carrierItems, selectedCarrierId]
+  );
   const visibleCompanies = useMemo(
     () => companies.filter((company) => company.active !== false),
     [companies]
@@ -187,52 +211,158 @@ export default function Home() {
     () => new Set(visibleCompanies.map((company) => company.id)),
     [visibleCompanies]
   );
+  const carrierIds = useMemo(
+    () => new Set(carrierItems.map((carrier) => carrier.id)),
+    [carrierItems]
+  );
 
   const openTasks = useMemo(
     () =>
       tasks
-        .filter((task) => task.status === "open" && visibleCompanyIds.has(task.companyId))
+        .filter((task) => task.status === "open" && isVisibleTaskEntity(task, visibleCompanyIds, carrierIds))
         .sort((firstTask, secondTask) => firstTask.createdAt.localeCompare(secondTask.createdAt)),
-    [tasks, visibleCompanyIds]
+    [carrierIds, tasks, visibleCompanyIds]
+  );
+  const taskItems = useMemo(
+    () =>
+      tasks
+        .filter((task) => {
+          if (!isVisibleTaskEntity(task, visibleCompanyIds, carrierIds)) {
+            return false;
+          }
+
+          if (taskFilter === "completed") {
+            return task.status === "done";
+          }
+
+          if (task.status !== "open") {
+            return false;
+          }
+
+          if (taskFilter === "today") {
+            return isTaskDueToday(task);
+          }
+
+          if (taskFilter === "overdue") {
+            return isTaskOverdue(task);
+          }
+
+          if (taskFilter === "upcoming") {
+            return !isTaskDueToday(task) && !isTaskOverdue(task);
+          }
+
+          return true;
+        })
+        .sort((firstTask, secondTask) => firstTask.createdAt.localeCompare(secondTask.createdAt)),
+    [carrierIds, taskFilter, tasks, visibleCompanyIds]
   );
   const selectedCompanyTasks = selectedCompany
     ? tasks.filter((task) => task.companyId === selectedCompany.id)
     : [];
+  const selectedCarrierTasks = selectedCarrier
+    ? tasks.filter((task) => getTaskEntityType(task, companies, carrierItems) === "carrier" && getTaskEntityId(task) === selectedCarrier.id)
+    : [];
   const companyContacts = selectedCompany
     ? contacts.filter((contact) => contact.companyId === selectedCompany.id).slice(0, 3)
     : [];
-  const filteredCompanies = visibleCompanies.filter((company) => {
-    if (activeAccountTab === "prospects") {
-      return company.status === "prospect";
-    }
-
-    if (activeAccountTab === "customers") {
-      return company.status === "customer";
-    }
-
-    if (activeAccountTab === "carriers") {
-      return false;
-    }
-
-    return true;
-  });
-  const previewCompany =
-    selectedCompany ??
-    filteredCompanies.find((company) =>
-      company.name.toLowerCase().includes(searchValue.toLowerCase())
-    ) ??
-    null;
+  const prospectCompanies = visibleCompanies.filter((company) => company.status === "prospect");
+  const customerCompanies = visibleCompanies.filter((company) => company.status === "customer");
+  const pageTitle = getPageTitle(currentView, selectedCompany, selectedCarrier);
+  const taskEntityNameById = useMemo(
+    () => entityNameById(visibleCompanies, carrierItems),
+    [carrierItems, visibleCompanies]
+  );
 
   function selectCompany(companyId: string) {
-    setSelectedCompanyId(companyId);
+    const company = companies.find((companyItem) => companyItem.id === companyId);
+
+    if (!company) {
+      return;
+    }
+
+    setSelectedCompanyId(company.id);
+    setSelectedCarrierId(null);
     setSelectedTaskId(null);
     setActiveProfileTab("command");
+    setCurrentView(company.status === "customer" ? "customer-profile" : "prospect-profile");
   }
 
   function selectTask(task: Task) {
-    setSelectedCompanyId(task.companyId);
     setSelectedTaskId(task.id);
+
+    if (getTaskEntityType(task, companies, carrierItems) === "carrier") {
+      const carrier = carrierItems.find((carrierItem) => carrierItem.id === getTaskEntityId(task));
+
+      if (!carrier) {
+        return;
+      }
+
+      setSelectedCarrierId(carrier.id);
+      setSelectedCompanyId(null);
+      setCurrentView("carrier-profile");
+      return;
+    }
+
+    const company = companies.find((companyItem) => companyItem.id === task.companyId);
+
+    if (!company) {
+      return;
+    }
+
+    setSelectedCompanyId(company.id);
+    setSelectedCarrierId(null);
     setActiveProfileTab("command");
+    setCurrentView(company.status === "customer" ? "customer-profile" : "prospect-profile");
+  }
+
+  function openTaskEntity(task: Task) {
+    if (getTaskEntityType(task, companies, carrierItems) === "carrier") {
+      const carrier = carrierItems.find((carrierItem) => carrierItem.id === getTaskEntityId(task));
+
+      if (!carrier) {
+        return;
+      }
+
+      setSelectedCarrierId(carrier.id);
+      setSelectedCompanyId(null);
+      setSelectedTaskId(null);
+      setCurrentView("carrier-profile");
+      return;
+    }
+
+    const company = companies.find((companyItem) => companyItem.id === task.companyId);
+
+    if (!company) {
+      return;
+    }
+
+    setSelectedCompanyId(company.id);
+    setSelectedCarrierId(null);
+    setSelectedTaskId(null);
+    setActiveProfileTab("command");
+    setCurrentView(company.status === "customer" ? "customer-profile" : "prospect-profile");
+  }
+
+  function openTaskDetail(task: Task) {
+    setSelectedTaskId((currentTaskId) => (currentTaskId === task.id ? null : task.id));
+  }
+
+  function selectCarrier(carrierId: string) {
+    setSelectedCarrierId(carrierId);
+    setSelectedCompanyId(null);
+    setSelectedTaskId(null);
+    setCurrentView("carrier-profile");
+  }
+
+  function openView(view: AppView) {
+    setCurrentView(view);
+    setSelectedTaskId(null);
+    setSelectedCarrierId(null);
+
+    if (view === "home" || view === "prospects" || view === "customers" || view === "carriers") {
+      setSelectedCompanyId(null);
+      setSelectedBulkProspectIds([]);
+    }
   }
 
   function toggleBulkProspect(companyId: string) {
@@ -256,9 +386,10 @@ export default function Home() {
     try {
       const savedToSupabase = await saveSupabaseState(state);
 
+      saveStoredState(state);
+
       if (!savedToSupabase) {
         console.log("[Blue Bomber Supabase] localStorage fallback used:", reason);
-        saveStoredState(state);
       }
     } catch (error) {
       console.error("[Blue Bomber Supabase] localStorage fallback after Supabase error:", {
@@ -317,9 +448,9 @@ export default function Home() {
     setCompanies(nextCompanies);
     persistState({ companies: nextCompanies }, "creating company");
     setSelectedCompanyId(newCompany.id);
-    setActiveAccountTab("all");
+    setSelectedCarrierId(null);
+    setCurrentView("prospect-profile");
     setActiveProfileTab("command");
-    setSearchValue(newCompany.name);
     setProspectName("");
     setShowProspectForm(false);
   }
@@ -340,7 +471,7 @@ export default function Home() {
     setTimeline(nextTimeline);
     setSelectedCompanyId(null);
     setSelectedTaskId(null);
-    setSearchValue("");
+    setCurrentView(company.status === "customer" ? "customers" : "prospects");
     saveStoredState({
       companies: nextCompanies,
       contacts: nextContacts,
@@ -482,7 +613,7 @@ export default function Home() {
     if (selectedCompanyId && selectedIds.has(selectedCompanyId)) {
       setSelectedCompanyId(null);
       setSelectedTaskId(null);
-      setSearchValue("");
+      setCurrentView("prospects");
     }
 
     persistState({ companies: nextCompanies }, "bulk archiving prospects");
@@ -521,7 +652,7 @@ export default function Home() {
     if (selectedCompanyId && selectedIds.has(selectedCompanyId)) {
       setSelectedCompanyId(null);
       setSelectedTaskId(null);
-      setSearchValue("");
+      setCurrentView("prospects");
     }
 
     saveStoredState({
@@ -545,9 +676,39 @@ export default function Home() {
       <section className="topbar" aria-label="Home">
         <div>
           <p className="app-label">Blue Bomber Logistics OS</p>
-          <h1>Tasks</h1>
+          <h1>{pageTitle}</h1>
         </div>
         <div className="topbar-actions">
+          <nav className="view-nav" aria-label="Primary navigation">
+            <button
+              className={currentView === "home" ? "active" : ""}
+              type="button"
+              onClick={() => openView("home")}
+            >
+              Tasks
+            </button>
+            <button
+              className={currentView === "prospects" || currentView === "prospect-profile" ? "active" : ""}
+              type="button"
+              onClick={() => openView("prospects")}
+            >
+              Prospects
+            </button>
+            <button
+              className={currentView === "customers" || currentView === "customer-profile" ? "active" : ""}
+              type="button"
+              onClick={() => openView("customers")}
+            >
+              Customers
+            </button>
+            <button
+              className={currentView === "carriers" || currentView === "carrier-profile" ? "active" : ""}
+              type="button"
+              onClick={() => openView("carriers")}
+            >
+              Carriers
+            </button>
+          </nav>
           <div className="theme-toggle" aria-label="Theme mode">
             <button
               aria-pressed={themeMode === "light"}
@@ -594,75 +755,89 @@ export default function Home() {
         </section>
       ) : null}
 
-      <section className="command-layout">
-        <section className="task-centerpiece" aria-label="Tasks">
+      {currentView === "home" ? (
+        <section className="task-centerpiece home-tasks" aria-label="Tasks">
           <div className="task-centerpiece-header">
-            <h2>Open Tasks</h2>
-            <span>{openTasks.length} active</span>
+            <div>
+              <h2>Tasks</h2>
+              <span>Default view: Today</span>
+            </div>
+            <span>{taskItems.length} shown · {openTasks.length} open</span>
           </div>
-          <TaskQueue
-            companyNameById={companyNameById(companies)}
-            onSelectTask={selectTask}
-            taskItems={openTasks}
-          />
-        </section>
-
-        <aside className="account-browser" aria-label="Accounts">
-          <div className="tabs compact-tabs" role="tablist" aria-label="Account filter">
-            {accountTabs.map((tab) => (
+          <div className="tabs task-filter-tabs" role="tablist" aria-label="Task filter">
+            {taskFilters.map((filter) => (
               <button
-                aria-selected={activeAccountTab === tab.id}
-                className={activeAccountTab === tab.id ? "active" : ""}
-                key={tab.id}
-                onClick={() => {
-                  setActiveAccountTab(tab.id);
-                  setSearchValue("");
-                  setSelectedCompanyId(null);
-                  setSelectedTaskId(null);
-                  setSelectedBulkProspectIds([]);
-                }}
+                aria-selected={taskFilter === filter.id}
+                className={taskFilter === filter.id ? "active" : ""}
+                key={filter.id}
+                onClick={() => setTaskFilter(filter.id)}
                 role="tab"
                 type="button"
               >
-                {tab.label}
+                {filter.label}
               </button>
             ))}
           </div>
-
-          {activeAccountTab === "carriers" ? (
-            <CarrierPreview carriers={carrierItems} />
-          ) : (
-            <CompanySearch
-              activeAccountTab={activeAccountTab}
-              companies={filteredCompanies}
-              importInputRef={importInputRef}
-              importResult={importResult}
-              isImporting={isImporting}
-              previewCompany={previewCompany}
-              searchValue={searchValue}
-              selectedBulkProspectIds={selectedBulkProspectIds}
-              selectedCompanyId={selectedCompanyId}
-              onArchiveSelected={archiveSelectedProspects}
-              onBulkStatusChange={updateSelectedProspectStatus}
-              onDeleteSelected={deleteSelectedProspects}
-              onImportFile={importProspects}
-              onSearchChange={setSearchValue}
-              onSelect={selectCompany}
-              onToggleBulkProspect={toggleBulkProspect}
+          <TaskQueue
+            entityNameById={taskEntityNameById}
+            onOpenEntity={openTaskEntity}
+            onOpenTaskDetail={openTaskDetail}
+            selectedTaskId={selectedTaskId}
+            taskItems={taskItems}
+          />
+          {selectedTask ? (
+            <TaskDetail
+              entityLabel={getTaskEntityLabel(selectedTask, companies, carrierItems)}
+              task={selectedTask}
             />
-          )}
-        </aside>
-      </section>
+          ) : null}
+        </section>
+      ) : null}
 
-      {selectedCompany ? (
-        <CompanyProfile
-          activeTab={activeProfileTab}
-          company={selectedCompany}
-          contacts={companyContacts}
-          onDeleteCompany={() => deleteCompany(selectedCompany)}
-          onSmartNotesChange={(smartNotes) => {
-            setCompanies((currentCompanies) =>
-              {
+      {currentView === "prospects" ? (
+        <CompanyListPage
+          companies={prospectCompanies}
+          importInputRef={importInputRef}
+          importResult={importResult}
+          isImporting={isImporting}
+          selectedBulkProspectIds={selectedBulkProspectIds}
+          title="Prospect List"
+          onArchiveSelected={archiveSelectedProspects}
+          onBulkStatusChange={updateSelectedProspectStatus}
+          onDeleteSelected={deleteSelectedProspects}
+          onImportFile={importProspects}
+          onSelect={selectCompany}
+          onToggleBulkProspect={toggleBulkProspect}
+        />
+      ) : null}
+
+      {currentView === "customers" ? (
+        <CompanyListPage
+          companies={customerCompanies}
+          selectedBulkProspectIds={[]}
+          title="Customer List"
+          onArchiveSelected={() => undefined}
+          onBulkStatusChange={() => undefined}
+          onDeleteSelected={() => undefined}
+          onImportFile={importProspects}
+          onSelect={selectCompany}
+          onToggleBulkProspect={() => undefined}
+        />
+      ) : null}
+
+      {currentView === "carriers" ? (
+        <CarrierListPage carriers={carrierItems} onSelect={selectCarrier} />
+      ) : null}
+
+      {(currentView === "prospect-profile" || currentView === "customer-profile") && selectedCompany ? (
+        <>
+          <CompanyProfile
+            activeTab={activeProfileTab}
+            company={selectedCompany}
+            contacts={companyContacts}
+            onDeleteCompany={() => deleteCompany(selectedCompany)}
+            onSmartNotesChange={(smartNotes) => {
+              setCompanies((currentCompanies) => {
                 const nextCompanies = currentCompanies.map((company) =>
                   company.id === selectedCompany.id ? { ...company, smartNotes } : company
                 );
@@ -670,61 +845,331 @@ export default function Home() {
                 persistState({ companies: nextCompanies }, "updating Activity Notes");
 
                 return nextCompanies;
+              });
+            }}
+            onAddNote={() => {
+              const latestCompany =
+                companies.find((company) => company.id === selectedCompany.id) ?? selectedCompany;
+              const note = latestCompany.smartNotes.trim();
+
+              if (!note) {
+                return;
               }
-            );
-          }}
-          onAddNote={() => {
-            const latestCompany =
-              companies.find((company) => company.id === selectedCompany.id) ?? selectedCompany;
-            const note = latestCompany.smartNotes.trim();
 
-            if (!note) {
-              return;
-            }
+              setSelectedTaskId(null);
+              const result = applyIntent(latestCompany.smartNotes, latestCompany, contacts);
+              const nextCompanies = companies.map((company) =>
+                company.id === latestCompany.id ? { ...result.company, smartNotes: "" } : company
+              );
+              const nextTasks = result.tasks.length ? [...result.tasks, ...tasks] : tasks;
+              const nextTimeline = [result.timelineEntry, ...timeline];
 
-	    const result = applyIntent(latestCompany.smartNotes, latestCompany, contacts);
-            const nextCompanies = companies.map((company) =>
-              company.id === latestCompany.id ? { ...result.company, smartNotes: "" } : company
-            );
-            const nextTasks = result.tasks.length ? [...result.tasks, ...tasks] : tasks;
-            const nextTimeline = [result.timelineEntry, ...timeline];
-        
-	    setCompanies(nextCompanies);
-            setContacts(result.contacts);
+              setCompanies(nextCompanies);
+              setContacts(result.contacts);
 
-            if (result.tasks.length) {
-              setTasks(nextTasks);
-              setSelectedTaskId(result.tasks[0].id);
-            }
+              if (result.tasks.length) {
+                setTasks(nextTasks);
+              }
 
-            setTimeline(nextTimeline);
-            persistState({
-              companies: nextCompanies,
-              contacts: result.contacts,
-              tasks: nextTasks,
-              timeline: nextTimeline
-            }, result.tasks.length ? "adding note and generating task" : "adding note");
-            setNoteResult({
-              tasks: result.tasks.map((task) => ({ title: task.title, owner: task.owner }))
-            });
-            window.setTimeout(() => setNoteResult(null), 5000);
-          }}
-          onTabChange={setActiveProfileTab}
-          tasks={selectedCompanyTasks}
-          timeline={timeline}
-          noteResult={noteResult}
-        />
-      ) : (
-        <section className="profile-empty" aria-label="Company Profile">
-          <h2>Select a task</h2>
-          <p>Company data stays hidden until work requires it.</p>
-        </section>
-      )}
+              setTimeline(nextTimeline);
+              persistState({
+                companies: nextCompanies,
+                contacts: result.contacts,
+                tasks: nextTasks,
+                timeline: nextTimeline
+              }, result.tasks.length ? "adding note and generating task" : "adding note");
+              setNoteResult({
+                tasks: result.tasks.map((task) => ({ title: task.title, owner: task.owner }))
+              });
+              window.setTimeout(() => setNoteResult(null), 5000);
+            }}
+            onTabChange={setActiveProfileTab}
+            tasks={selectedCompanyTasks}
+            timeline={timeline}
+            noteResult={noteResult}
+          />
+          {selectedTask ? (
+            <TaskDetail
+              entityLabel={getTaskEntityLabel(selectedTask, companies, carrierItems)}
+              task={selectedTask}
+            />
+          ) : null}
+        </>
+      ) : null}
 
-      {selectedTask ? (
-        <TaskDetail task={selectedTask} />
+      {currentView === "carrier-profile" && selectedCarrier ? (
+        <>
+          <CarrierProfile
+            carrier={selectedCarrier}
+            note={carrierNote}
+            noteResult={noteResult}
+            tasks={selectedCarrierTasks}
+            onAddNote={() => {
+              const note = carrierNote.trim();
+
+              if (!note) {
+                return;
+              }
+
+              setSelectedTaskId(null);
+              const result = applyCarrierIntent(note, selectedCarrier);
+              const nextTasks = result.tasks.length ? [...result.tasks, ...tasks] : tasks;
+
+              if (result.tasks.length) {
+                setTasks(nextTasks);
+              }
+
+              setCarrierNote("");
+              persistState({
+                tasks: nextTasks
+              }, result.tasks.length ? "adding carrier note and generating task" : "adding carrier note");
+              setNoteResult({
+                tasks: result.tasks.map((task) => ({ title: task.title, owner: task.owner }))
+              });
+              window.setTimeout(() => setNoteResult(null), 5000);
+            }}
+            onNoteChange={setCarrierNote}
+          />
+          {selectedTask ? (
+            <TaskDetail
+              entityLabel={getTaskEntityLabel(selectedTask, companies, carrierItems)}
+              task={selectedTask}
+            />
+          ) : null}
+        </>
       ) : null}
     </main>
+  );
+}
+
+function CompanyListPage({
+  companies,
+  importInputRef,
+  importResult,
+  isImporting = false,
+  selectedBulkProspectIds,
+  title,
+  onArchiveSelected,
+  onBulkStatusChange,
+  onDeleteSelected,
+  onImportFile,
+  onSelect,
+  onToggleBulkProspect
+}: {
+  companies: Company[];
+  importInputRef?: React.RefObject<HTMLInputElement>;
+  importResult?: { imported: number; skipped: number } | null;
+  isImporting?: boolean;
+  selectedBulkProspectIds: string[];
+  title: string;
+  onArchiveSelected: () => void;
+  onBulkStatusChange: (status: CompanyStatus) => void;
+  onDeleteSelected: () => void;
+  onImportFile: (file: File) => void;
+  onSelect: (companyId: string) => void;
+  onToggleBulkProspect: (companyId: string) => void;
+}) {
+  const isProspectList = title === "Prospect List";
+  const hasBulkSelection = selectedBulkProspectIds.length > 0;
+
+  return (
+    <section className="list-page" aria-label={title}>
+      <div className="list-header">
+        <div>
+          <h2>{title}</h2>
+          <span>{companies.length} active</span>
+        </div>
+        {isProspectList && importInputRef ? (
+          <div className="import-control">
+            <button type="button" onClick={() => importInputRef.current?.click()} disabled={isImporting}>
+              {isImporting ? "Importing" : "Import"}
+            </button>
+            <input
+              ref={importInputRef}
+              accept=".csv,.xlsx"
+              aria-label="Import prospects"
+              type="file"
+              onChange={(event) => {
+                const file = event.target.files?.[0];
+
+                if (file) {
+                  void onImportFile(file);
+                }
+              }}
+            />
+            {importResult ? (
+              <span>
+                Imported {importResult.imported} · Skipped {importResult.skipped}
+              </span>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
+
+      {isProspectList ? (
+        <div className="bulk-control list-bulk-control" aria-label="Bulk prospect actions">
+          <div className="bulk-actions horizontal">
+            <span>{selectedBulkProspectIds.length} selected</span>
+            <select
+              aria-label="Change selected prospect status"
+              disabled={!hasBulkSelection}
+              defaultValue=""
+              onChange={(event) => {
+                const status = event.target.value as CompanyStatus | "";
+
+                if (status) {
+                  onBulkStatusChange(status);
+                  event.currentTarget.value = "";
+                }
+              }}
+            >
+              <option value="">Status</option>
+              <option value="prospect">Prospect</option>
+              <option value="customer">Customer</option>
+            </select>
+            <button type="button" disabled={!hasBulkSelection} onClick={onArchiveSelected}>
+              Archive
+            </button>
+            <button
+              className="danger"
+              type="button"
+              disabled={!hasBulkSelection}
+              onClick={onDeleteSelected}
+            >
+              Delete
+            </button>
+          </div>
+        </div>
+      ) : null}
+
+      <ul className="record-list">
+        {companies.map((company) => (
+          <li key={company.id}>
+            {isProspectList ? (
+              <input
+                aria-label={`Select ${company.name}`}
+                checked={selectedBulkProspectIds.includes(company.id)}
+                type="checkbox"
+                onChange={() => onToggleBulkProspect(company.id)}
+              />
+            ) : null}
+            <button type="button" onClick={() => onSelect(company.id)}>
+              <span>{statusLabel(company.status)}</span>
+              <strong>{company.name}</strong>
+              <small>
+                {company.city}, {company.state} · {company.segment}
+              </small>
+            </button>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+function CarrierListPage({ carriers, onSelect }: { carriers: Carrier[]; onSelect: (carrierId: string) => void }) {
+  return (
+    <section className="list-page" aria-label="Carrier List">
+      <div className="list-header">
+        <div>
+          <h2>Carrier List</h2>
+          <span>{carriers.length} active</span>
+        </div>
+      </div>
+
+      <ul className="record-list">
+        {carriers.map((carrier) => (
+          <li key={carrier.id}>
+            <button type="button" onClick={() => onSelect(carrier.id)}>
+              <span>Carrier</span>
+              <strong>{carrier.name}</strong>
+              <small>
+                {carrier.city}, {carrier.state} · {carrier.equipment}
+              </small>
+            </button>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+function CarrierProfile({
+  carrier,
+  note,
+  noteResult,
+  tasks,
+  onAddNote,
+  onNoteChange
+}: {
+  carrier: Carrier;
+  note: string;
+  noteResult: { tasks: Array<{ title: string; owner: string }> } | null;
+  tasks: Task[];
+  onAddNote: () => void;
+  onNoteChange: (note: string) => void;
+}) {
+  return (
+    <section className="profile" aria-label="Carrier Profile">
+      <div className="profile-header">
+        <div>
+          <span className="snapshot-label">Snapshot</span>
+          <span className="status">Carrier</span>
+          <h2>{carrier.name}</h2>
+          <p>
+            {carrier.city}, {carrier.state} · {carrier.equipment}
+          </p>
+        </div>
+      </div>
+
+      <section className="command-timeline" aria-label="ACTIVITY NOTES">
+        <div className="command-center">
+          <div className="command-center-header">
+            <h3>ACTIVITY NOTES</h3>
+            <p>Type notes naturally. Blue Bomber OS will detect tasks and activities automatically.</p>
+          </div>
+          <textarea
+            value={note}
+            onChange={(event) => onNoteChange(event.target.value)}
+            placeholder={`Need COI
+
+Need W9
+
+Check availability
+
+Send load details
+
+Confirm pickup
+
+Confirm delivery`}
+          />
+          <div className="note-actions">
+            <button type="button" onClick={onAddNote}>
+              Add Note
+            </button>
+          </div>
+          {noteResult ? <NoteSavedMessage tasks={noteResult.tasks} /> : null}
+        </div>
+
+        <div className="current-opportunity">
+          <span>Carrier Snapshot</span>
+          <strong>{carrier.equipment}</strong>
+        </div>
+        <div className="timeline-stream">
+          <h3>Carrier Tasks</h3>
+          {tasks.length ? (
+            tasks.map((task) => (
+              <div className="timeline-item task-event" key={task.id}>
+                <strong>{task.title}</strong>
+                <span>{taskStatusLabel(task.status)} · {task.due} · Owner: {task.owner}</span>
+              </div>
+            ))
+          ) : (
+            <p className="empty">No carrier tasks here.</p>
+          )}
+        </div>
+      </section>
+    </section>
   );
 }
 
@@ -1288,7 +1733,7 @@ function CarrierPreview({ carriers: carrierItems }: { carriers: Carrier[] }) {
   );
 }
 
-function TaskDetail({ task }: { task: Task }) {
+function TaskDetail({ entityLabel, task }: { entityLabel: string; task: Task }) {
   return (
     <section className="task-detail" aria-label="Task Detail">
       <h2>Task Detail</h2>
@@ -1306,7 +1751,7 @@ function TaskDetail({ task }: { task: Task }) {
           <dd>{taskStatusLabel(task.status)}</dd>
         </div>
         <div>
-          <dt>Company</dt>
+          <dt>{entityLabel}</dt>
           <dd>{task.sourceCompany}</dd>
         </div>
         <div>
@@ -1323,13 +1768,17 @@ function TaskDetail({ task }: { task: Task }) {
 }
 
 function TaskQueue({
-  taskItems,
-  companyNameById,
-  onSelectTask
+  entityNameById,
+  onOpenEntity,
+  onOpenTaskDetail,
+  selectedTaskId,
+  taskItems
 }: {
+  entityNameById: Record<string, string>;
+  onOpenEntity: (task: Task) => void;
+  onOpenTaskDetail: (task: Task) => void;
+  selectedTaskId: string | null;
   taskItems: Task[];
-  companyNameById: Record<string, string>;
-  onSelectTask: (task: Task) => void;
 }) {
   if (!taskItems.length) {
     return <p className="empty">No tasks here.</p>;
@@ -1339,19 +1788,137 @@ function TaskQueue({
     <ul className="task-list">
       {taskItems.map((task) => (
         <li key={task.id}>
-          <button type="button" onClick={() => onSelectTask(task)}>
+          <article className={selectedTaskId === task.id ? "task-card selected" : "task-card"}>
             <span className={task.priority === "high" ? "task-dot high" : "task-dot"} />
             <div>
               <strong>{task.title}</strong>
               <span>
-                {companyNameById[task.companyId]} · {task.due} · {task.owner}
+                <button className="task-entity-link" type="button" onClick={() => onOpenEntity(task)}>
+                  {entityNameById[getTaskEntityId(task)] ?? task.sourceCompany}
+                </button>
+                {" · "}
+                {task.due} · {task.owner}
               </span>
             </div>
-          </button>
+            <button className="task-detail-button" type="button" onClick={() => onOpenTaskDetail(task)}>
+              {selectedTaskId === task.id ? "Hide Details" : "Open/Details"}
+            </button>
+          </article>
         </li>
       ))}
     </ul>
   );
+}
+
+function getPageTitle(view: AppView, company: Company | null, carrier: Carrier | null) {
+  if (view === "prospect-profile" || view === "customer-profile") {
+    return company?.name ?? "Company Profile";
+  }
+
+  if (view === "carrier-profile") {
+    return carrier?.name ?? "Carrier Profile";
+  }
+
+  if (view === "prospects") {
+    return "Prospects";
+  }
+
+  if (view === "customers") {
+    return "Customers";
+  }
+
+  if (view === "carriers") {
+    return "Carriers";
+  }
+
+  return "Tasks";
+}
+
+function getTaskEntityId(task: Task) {
+  return task.entityId ?? task.companyId;
+}
+
+function getTaskEntityType(task: Task, companies: Company[], carriers: Carrier[]) {
+  if (task.entityType) {
+    return task.entityType;
+  }
+
+  if (carriers.some((carrier) => carrier.id === task.companyId)) {
+    return "carrier";
+  }
+
+  const company = companies.find((companyItem) => companyItem.id === task.companyId);
+
+  return company?.status ?? "prospect";
+}
+
+function getTaskEntityLabel(task: Task, companies: Company[], carriers: Carrier[]) {
+  return getTaskEntityType(task, companies, carriers) === "carrier" ? "Carrier" : "Company";
+}
+
+function entityNameById(companies: Company[], carriers: Carrier[]) {
+  return {
+    ...Object.fromEntries(companies.map((company) => [company.id, company.name])),
+    ...Object.fromEntries(carriers.map((carrier) => [carrier.id, carrier.name]))
+  };
+}
+
+function isVisibleTaskEntity(
+  task: Task,
+  visibleCompanyIds: Set<string>,
+  carrierIds: Set<string>
+) {
+  const entityId = getTaskEntityId(task);
+
+  return visibleCompanyIds.has(entityId) || carrierIds.has(entityId);
+}
+
+function isTaskDueToday(task: Task) {
+  const due = task.due.trim().toLowerCase();
+
+  if (due === "today") {
+    return true;
+  }
+
+  const dueDate = parseDueDate(task.due);
+
+  if (!dueDate) {
+    return false;
+  }
+
+  const today = new Date();
+
+  return dueDate.toDateString() === today.toDateString();
+}
+
+function isTaskOverdue(task: Task) {
+  const due = task.due.trim().toLowerCase();
+
+  if (due === "yesterday") {
+    return true;
+  }
+
+  const dueDate = parseDueDate(task.due);
+
+  if (!dueDate) {
+    return false;
+  }
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  dueDate.setHours(0, 0, 0, 0);
+
+  return dueDate < today;
+}
+
+function parseDueDate(value: string) {
+  const timestamp = Date.parse(value);
+
+  if (Number.isNaN(timestamp)) {
+    return null;
+  }
+
+  return new Date(timestamp);
 }
 
 function companyNameById(companyItems: Company[]) {
