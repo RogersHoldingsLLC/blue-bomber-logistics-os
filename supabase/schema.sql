@@ -46,7 +46,7 @@ create table if not exists tasks (
   title text not null,
   due text,
   priority text not null default 'normal' check (priority in ('critical', 'high', 'normal', 'low')),
-  status text not null default 'open' check (status in ('open', 'done')),
+  status text not null default 'open' check (status in ('open', 'in_progress', 'waiting', 'completed', 'cancelled', 'overdue')),
   owner text not null,
   created_by text not null default 'System',
   source_company text not null,
@@ -58,6 +58,12 @@ create table if not exists tasks (
     (entity_type = 'carrier' and carrier_id is not null)
   )
 );
+
+alter table tasks drop constraint if exists tasks_status_check;
+update tasks set status = 'completed' where status = 'done';
+alter table tasks
+  add constraint tasks_status_check
+  check (status in ('open', 'in_progress', 'waiting', 'completed', 'cancelled', 'overdue'));
 
 create table if not exists timeline (
   id uuid primary key default gen_random_uuid(),

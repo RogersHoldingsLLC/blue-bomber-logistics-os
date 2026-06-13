@@ -14,6 +14,8 @@
   --accent-dark: #084985;
   --accent-contrast: #ffffff;
   --attention: #b42318;
+  --attention-surface: #fff1f0;
+  --attention-text: #8f1d13;
   --success-surface: #eef8f0;
   --success-border: #b8dec0;
   --success-text: #1d5f2a;
@@ -36,6 +38,8 @@
   --accent-dark: #3678b8;
   --accent-contrast: #07111d;
   --attention: #f07167;
+  --attention-surface: #3b1d1d;
+  --attention-text: #ffb4ad;
   --success-surface: #173124;
   --success-border: #2f684a;
   --success-text: #9de0b3;
@@ -266,9 +270,49 @@ h1 {
   font-weight: 700;
 }
 
+.task-counters {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin-bottom: 12px;
+}
+
+.task-counters div {
+  background: var(--surface-muted);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  display: grid;
+  gap: 4px;
+  padding: 10px;
+}
+
+.task-counters span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.task-counters strong {
+  font-size: 22px;
+  line-height: 1;
+}
+
 .task-filter-tabs {
   grid-template-columns: repeat(5, minmax(0, 1fr));
   margin-bottom: 14px;
+}
+
+.task-search {
+  background: var(--input-surface);
+  border: 1px solid var(--input-border);
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 14px;
+  margin-bottom: 14px;
+  min-height: 38px;
+  padding: 0 12px;
+  width: 100%;
 }
 
 .account-browser {
@@ -323,6 +367,37 @@ h1 {
 .contact-list li + li,
 .question-list li + li {
   margin-top: 8px;
+}
+
+.task-dashboard-groups {
+  display: grid;
+  gap: 14px;
+}
+
+.task-dashboard-section {
+  display: grid;
+  gap: 10px;
+}
+
+.task-dashboard-section h3,
+.owner-task-group h4 {
+  font-size: 12px;
+  letter-spacing: 0;
+  margin: 0;
+  text-transform: uppercase;
+}
+
+.task-dashboard-section h3 {
+  color: var(--accent);
+}
+
+.owner-task-group {
+  display: grid;
+  gap: 8px;
+}
+
+.owner-task-group h4 {
+  color: var(--muted);
 }
 
 .company-picker {
@@ -647,6 +722,75 @@ button.company-preview:hover {
 }
 
 .task-detail-button:hover {
+  border-color: var(--border-focus);
+}
+
+.task-card-main {
+  display: grid;
+  gap: 7px;
+}
+
+.task-card-meta {
+  display: grid;
+  gap: 6px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin: 0;
+}
+
+.task-card-meta div {
+  background: var(--surface-muted);
+  border-radius: 6px;
+  padding: 7px;
+}
+
+.task-card-meta dt {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.task-card-meta dd {
+  font-size: 13px;
+  font-weight: 800;
+  margin: 2px 0 0;
+}
+
+.task-status {
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.task-status.overdue {
+  background: var(--attention-surface);
+  border: 1px solid var(--attention);
+  border-radius: 999px;
+  color: var(--attention-text);
+  display: inline-flex;
+  padding: 2px 7px;
+}
+
+.task-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+.task-card-actions button {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 800;
+  min-height: 32px;
+  padding: 0 9px;
+}
+
+.task-card-actions button:hover {
   border-color: var(--border-focus);
 }
 

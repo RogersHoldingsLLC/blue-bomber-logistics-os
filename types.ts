@@ -2,7 +2,7 @@ export type CompanyStatus = "prospect" | "customer";
 
 export type AccountTab = "all" | "prospects" | "customers" | "carriers";
 
-export type TaskStatus = "open" | "done";
+export type TaskStatus = "open" | "in_progress" | "waiting" | "completed" | "cancelled" | "overdue";
 
 export type TaskEntityType = "prospect" | "customer" | "carrier";
 

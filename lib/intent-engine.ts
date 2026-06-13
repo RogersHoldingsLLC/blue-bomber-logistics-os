@@ -37,17 +37,17 @@ export type CarrierIntentResult = {
 const taskIntentRules: TaskIntentRule[] = [
   {
     match: "call back tomorrow",
-    taskName: "Call Back Tomorrow",
+    taskName: "Call Back",
     owner: "sales",
     priority: "normal",
     due: "Tomorrow"
   },
   {
     match: "call back monday",
-    taskName: "Call Back Monday",
+    taskName: "Call Back",
     owner: "sales",
     priority: "normal",
-    due: "Monday"
+    due: "Next Monday"
   },
   {
     match: "need better contacts",
@@ -114,6 +114,13 @@ const taskIntentRules: TaskIntentRule[] = [
     taskName: "Follow Up",
     owner: "sales",
     priority: "normal"
+  },
+  {
+    match: "follow up next week",
+    taskName: "Follow Up",
+    owner: "sales",
+    priority: "normal",
+    due: "Next Week"
   },
   {
     match: "need email",

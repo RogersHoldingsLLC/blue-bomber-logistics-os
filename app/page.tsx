@@ -21,7 +21,7 @@ import {
   saveSupabaseState
 } from "@/lib/supabase-storage";
 import { createUuid } from "@/lib/uuid";
-import type { Carrier, Company, CompanyStatus, Contact, Task } from "@/types";
+import type { Carrier, Company, CompanyStatus, Contact, Task, TimelineEntry } from "@/types";
 
 type ProfileTab = "command" | "contacts" | "qualify" | "snapshot";
 type ThemeMode = "light" | "dark";
@@ -68,7 +68,16 @@ function statusLabel(status: CompanyStatus) {
 }
 
 function taskStatusLabel(status: Task["status"]) {
-  return status === "open" ? "Open" : "Done";
+  const labels: Record<Task["status"], string> = {
+    open: "Open",
+    in_progress: "In Progress",
+    waiting: "Waiting",
+    completed: "Completed",
+    cancelled: "Cancelled",
+    overdue: "OVERDUE"
+  };
+
+  return labels[status];
 }
 
 export default function Home() {
@@ -83,6 +92,7 @@ export default function Home() {
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [currentView, setCurrentView] = useState<AppView>("home");
   const [taskFilter, setTaskFilter] = useState<TaskFilter>("today");
+  const [taskSearch, setTaskSearch] = useState("");
   const [activeProfileTab, setActiveProfileTab] = useState<ProfileTab>("command");
   const [showProspectForm, setShowProspectForm] = useState(false);
   const [prospectName, setProspectName] = useState("");
@@ -191,6 +201,24 @@ export default function Home() {
     });
   }, [carrierItems, companies, contacts, hasHydratedStorage, tasks, timeline]);
 
+  useEffect(() => {
+    if (!hasHydratedStorage) {
+      return;
+    }
+
+    const nextTasks = tasks.map((task) =>
+      shouldMarkTaskOverdue(task) ? { ...task, status: "overdue" as const } : task
+    );
+    const hasOverdueChanges = nextTasks.some((task, index) => task.status !== tasks[index].status);
+
+    if (!hasOverdueChanges) {
+      return;
+    }
+
+    setTasks(nextTasks);
+    persistState({ tasks: nextTasks }, "marking overdue tasks");
+  }, [hasHydratedStorage, tasks]);
+
   const selectedCompany = useMemo(
     () => companies.find((company) => company.id === selectedCompanyId) ?? null,
     [companies, selectedCompanyId]
@@ -216,12 +244,25 @@ export default function Home() {
     [carrierItems]
   );
 
-  const openTasks = useMemo(
+  const taskEntityNameById = useMemo(
+    () => entityNameById(visibleCompanies, carrierItems),
+    [carrierItems, visibleCompanies]
+  );
+  const activeTasks = useMemo(
     () =>
       tasks
-        .filter((task) => task.status === "open" && isVisibleTaskEntity(task, visibleCompanyIds, carrierIds))
-        .sort((firstTask, secondTask) => firstTask.createdAt.localeCompare(secondTask.createdAt)),
+        .filter((task) => isActiveTask(task) && isVisibleTaskEntity(task, visibleCompanyIds, carrierIds))
+        .sort(compareTasksByDueThenCreated),
     [carrierIds, tasks, visibleCompanyIds]
+  );
+  const taskCounters = useMemo(
+    () => ({
+      open: activeTasks.length,
+      dueToday: activeTasks.filter((task) => isTaskDueToday(task)).length,
+      overdue: activeTasks.filter((task) => isTaskOverdue(task)).length,
+      completedToday: tasks.filter((task) => task.status === "completed" && wasTaskCompletedToday(task)).length
+    }),
+    [activeTasks, tasks]
   );
   const taskItems = useMemo(
     () =>
@@ -232,15 +273,15 @@ export default function Home() {
           }
 
           if (taskFilter === "completed") {
-            return task.status === "done";
+            return task.status === "completed";
           }
 
-          if (task.status !== "open") {
+          if (!isActiveTask(task)) {
             return false;
           }
 
           if (taskFilter === "today") {
-            return isTaskDueToday(task);
+            return true;
           }
 
           if (taskFilter === "overdue") {
@@ -253,8 +294,9 @@ export default function Home() {
 
           return true;
         })
-        .sort((firstTask, secondTask) => firstTask.createdAt.localeCompare(secondTask.createdAt)),
-    [carrierIds, taskFilter, tasks, visibleCompanyIds]
+        .filter((task) => doesTaskMatchSearch(task, taskEntityNameById, taskSearch))
+        .sort(compareTasksByDueThenCreated),
+    [carrierIds, taskEntityNameById, taskFilter, taskSearch, tasks, visibleCompanyIds]
   );
   const selectedCompanyTasks = selectedCompany
     ? tasks.filter((task) => task.companyId === selectedCompany.id)
@@ -268,10 +310,6 @@ export default function Home() {
   const prospectCompanies = visibleCompanies.filter((company) => company.status === "prospect");
   const customerCompanies = visibleCompanies.filter((company) => company.status === "customer");
   const pageTitle = getPageTitle(currentView, selectedCompany, selectedCarrier);
-  const taskEntityNameById = useMemo(
-    () => entityNameById(visibleCompanies, carrierItems),
-    [carrierItems, visibleCompanies]
-  );
 
   function selectCompany(companyId: string) {
     const company = companies.find((companyItem) => companyItem.id === companyId);
@@ -345,6 +383,90 @@ export default function Home() {
 
   function openTaskDetail(task: Task) {
     setSelectedTaskId((currentTaskId) => (currentTaskId === task.id ? null : task.id));
+  }
+
+  function updateTaskLifecycle(
+    task: Task,
+    updates: Partial<Task>,
+    eventTitle: string,
+    eventDetail: string
+  ) {
+    const updatedTask = { ...task, ...updates };
+    const nextTasks = tasks.map((taskItem) => (taskItem.id === task.id ? updatedTask : taskItem));
+    const event = createTaskTimelineEvent(updatedTask, eventTitle, eventDetail);
+    const nextTimeline = event ? [event, ...timeline] : timeline;
+
+    setTasks(nextTasks);
+    setTimeline(nextTimeline);
+    persistState({
+      tasks: nextTasks,
+      timeline: nextTimeline
+    }, eventTitle.toLowerCase());
+  }
+
+  function completeTask(task: Task) {
+    updateTaskLifecycle(
+      task,
+      {
+        status: "completed",
+        completedAt: new Date().toISOString()
+      },
+      "Task Completed",
+      `${task.title} completed by ${task.owner}.`
+    );
+  }
+
+  function snoozeTask(task: Task) {
+    updateTaskLifecycle(
+      task,
+      {
+        due: "Tomorrow",
+        status: "waiting"
+      },
+      "Task Snoozed",
+      `${task.title} snoozed until Tomorrow.`
+    );
+  }
+
+  function reassignTask(task: Task) {
+    const nextOwner = window.prompt("Assign task to", task.owner)?.trim();
+
+    if (!nextOwner || nextOwner === task.owner) {
+      return;
+    }
+
+    updateTaskLifecycle(
+      task,
+      { owner: nextOwner },
+      "Task Reassigned",
+      `${task.title} reassigned from ${task.owner} to ${nextOwner}.`
+    );
+  }
+
+  function editTask(task: Task) {
+    const nextTitle = window.prompt("Task name", task.title)?.trim();
+
+    if (!nextTitle) {
+      return;
+    }
+
+    const nextDue = window.prompt("Due date", task.due)?.trim() || task.due;
+    const nextStatusInput = window
+      .prompt("Status: open, in_progress, waiting, completed, cancelled", task.status)
+      ?.trim()
+      .toLowerCase();
+    const nextStatus = parseTaskStatus(nextStatusInput) ?? task.status;
+
+    updateTaskLifecycle(
+      task,
+      {
+        title: nextTitle,
+        due: nextDue,
+        status: nextStatus === "overdue" && !isTaskOverdue({ ...task, due: nextDue }) ? "open" : nextStatus
+      },
+      "Task Edited",
+      `${task.title} edited.`
+    );
   }
 
   function selectCarrier(carrierId: string) {
@@ -757,13 +879,31 @@ export default function Home() {
       ) : null}
 
       {currentView === "home" ? (
-        <section className="task-centerpiece home-tasks" aria-label="Tasks">
+        <section className="task-centerpiece home-tasks" aria-label="TASK DASHBOARD">
           <div className="task-centerpiece-header">
             <div>
-              <h2>Tasks</h2>
-              <span>Default view: Today</span>
+              <span>TASK DASHBOARD</span>
+              <h2>TODAY&apos;S TASKS</h2>
             </div>
-            <span>{taskItems.length} shown · {openTasks.length} open</span>
+            <span>{taskItems.length} shown · {taskCounters.open} open</span>
+          </div>
+          <div className="task-counters" aria-label="Task counters">
+            <div>
+              <span>Open Tasks</span>
+              <strong>{taskCounters.open}</strong>
+            </div>
+            <div>
+              <span>Due Today</span>
+              <strong>{taskCounters.dueToday}</strong>
+            </div>
+            <div>
+              <span>Overdue</span>
+              <strong>{taskCounters.overdue}</strong>
+            </div>
+            <div>
+              <span>Completed Today</span>
+              <strong>{taskCounters.completedToday}</strong>
+            </div>
           </div>
           <div className="tabs task-filter-tabs" role="tablist" aria-label="Task filter">
             {taskFilters.map((filter) => (
@@ -779,11 +919,23 @@ export default function Home() {
               </button>
             ))}
           </div>
-          <TaskQueue
+          <input
+            className="task-search"
+            value={taskSearch}
+            onChange={(event) => setTaskSearch(event.target.value)}
+            placeholder="Search tasks, company, owner"
+            type="search"
+          />
+          <TaskDashboard
             entityNameById={taskEntityNameById}
+            onCompleteTask={completeTask}
+            onEditTask={editTask}
             onOpenEntity={openTaskEntity}
             onOpenTaskDetail={openTaskDetail}
+            onReassignTask={reassignTask}
+            onSnoozeTask={snoozeTask}
             selectedTaskId={selectedTaskId}
+            taskFilter={taskFilter}
             taskItems={taskItems}
           />
           {selectedTask ? (
@@ -863,7 +1015,12 @@ export default function Home() {
                 company.id === latestCompany.id ? { ...result.company, smartNotes: "" } : company
               );
               const nextTasks = result.tasks.length ? [...result.tasks, ...tasks] : tasks;
-              const nextTimeline = [result.timelineEntry, ...timeline];
+              const taskCreatedEvents = result.tasks
+                .map((task) =>
+                  createTaskTimelineEvent(task, "Task Created", `${task.title} created for ${task.owner}.`)
+                )
+                .filter((entry): entry is TimelineEntry => Boolean(entry));
+              const nextTimeline = [...taskCreatedEvents, result.timelineEntry, ...timeline];
 
               setCompanies(nextCompanies);
               setContacts(result.contacts);
@@ -1749,7 +1906,11 @@ function TaskDetail({ entityLabel, task }: { entityLabel: string; task: Task }) 
         </div>
         <div>
           <dt>Status</dt>
-          <dd>{taskStatusLabel(task.status)}</dd>
+          <dd>{taskStatusLabel(getTaskDisplayStatus(task))}</dd>
+        </div>
+        <div>
+          <dt>Due Date</dt>
+          <dd>{task.due || "Not set"}</dd>
         </div>
         <div>
           <dt>{entityLabel}</dt>
@@ -1768,46 +1929,155 @@ function TaskDetail({ entityLabel, task }: { entityLabel: string; task: Task }) 
   );
 }
 
-function TaskQueue({
+function TaskDashboard({
   entityNameById,
+  onCompleteTask,
+  onEditTask,
   onOpenEntity,
   onOpenTaskDetail,
+  onReassignTask,
+  onSnoozeTask,
   selectedTaskId,
+  taskFilter,
   taskItems
 }: {
   entityNameById: Record<string, string>;
+  onCompleteTask: (task: Task) => void;
+  onEditTask: (task: Task) => void;
   onOpenEntity: (task: Task) => void;
   onOpenTaskDetail: (task: Task) => void;
+  onReassignTask: (task: Task) => void;
+  onSnoozeTask: (task: Task) => void;
   selectedTaskId: string | null;
+  taskFilter: TaskFilter;
   taskItems: Task[];
 }) {
   if (!taskItems.length) {
     return <p className="empty">No tasks here.</p>;
   }
 
+  const sections =
+    taskFilter === "today"
+      ? [
+          { title: "Overdue", tasks: taskItems.filter((task) => isTaskOverdue(task)) },
+          { title: "Due Today", tasks: taskItems.filter((task) => isTaskDueToday(task) && !isTaskOverdue(task)) },
+          { title: "Upcoming", tasks: taskItems.filter((task) => !isTaskDueToday(task) && !isTaskOverdue(task)) }
+        ]
+      : [{ title: taskFilters.find((filter) => filter.id === taskFilter)?.label ?? "Tasks", tasks: taskItems }];
+
   return (
-    <ul className="task-list">
-      {taskItems.map((task) => (
-        <li key={task.id}>
-          <article className={selectedTaskId === task.id ? "task-card selected" : "task-card"}>
-            <span className={task.priority === "high" ? "task-dot high" : "task-dot"} />
-            <div>
-              <strong>{task.title}</strong>
-              <span>
-                <button className="task-entity-link" type="button" onClick={() => onOpenEntity(task)}>
-                  {entityNameById[getTaskEntityId(task)] ?? task.sourceCompany}
-                </button>
-                {" · "}
-                {task.due} · {task.owner}
-              </span>
-            </div>
-            <button className="task-detail-button" type="button" onClick={() => onOpenTaskDetail(task)}>
-              {selectedTaskId === task.id ? "Hide Details" : "Open/Details"}
-            </button>
-          </article>
-        </li>
+    <div className="task-dashboard-groups">
+      {sections
+        .filter((section) => section.tasks.length)
+        .map((section) => (
+          <TaskDashboardSection
+            entityNameById={entityNameById}
+            key={section.title}
+            onCompleteTask={onCompleteTask}
+            onEditTask={onEditTask}
+            onOpenEntity={onOpenEntity}
+            onOpenTaskDetail={onOpenTaskDetail}
+            onReassignTask={onReassignTask}
+            onSnoozeTask={onSnoozeTask}
+            selectedTaskId={selectedTaskId}
+            tasks={section.tasks}
+            title={section.title}
+          />
+        ))}
+    </div>
+  );
+}
+
+function TaskDashboardSection({
+  entityNameById,
+  onCompleteTask,
+  onEditTask,
+  onOpenEntity,
+  onOpenTaskDetail,
+  onReassignTask,
+  onSnoozeTask,
+  selectedTaskId,
+  tasks,
+  title
+}: {
+  entityNameById: Record<string, string>;
+  onCompleteTask: (task: Task) => void;
+  onEditTask: (task: Task) => void;
+  onOpenEntity: (task: Task) => void;
+  onOpenTaskDetail: (task: Task) => void;
+  onReassignTask: (task: Task) => void;
+  onSnoozeTask: (task: Task) => void;
+  selectedTaskId: string | null;
+  tasks: Task[];
+  title: string;
+}) {
+  const owners = groupTasksByOwner(tasks);
+
+  return (
+    <section className="task-dashboard-section" aria-label={title}>
+      <h3>{title}</h3>
+      {owners.map(([owner, ownerTasks]) => (
+        <div className="owner-task-group" key={`${title}-${owner}`}>
+          <h4>{owner}</h4>
+          <ul className="task-list">
+            {ownerTasks.map((task) => {
+              const displayStatus = getTaskDisplayStatus(task);
+
+              return (
+                <li key={task.id}>
+                  <article className={selectedTaskId === task.id ? "task-card selected" : "task-card"}>
+                    <span className={task.priority === "high" ? "task-dot high" : "task-dot"} />
+                    <div className="task-card-main">
+                      <strong>{task.title}</strong>
+                      <span>
+                        <button className="task-entity-link" type="button" onClick={() => onOpenEntity(task)}>
+                          {entityNameById[getTaskEntityId(task)] ?? task.sourceCompany}
+                        </button>
+                      </span>
+                      <dl className="task-card-meta">
+                        <div>
+                          <dt>Owner</dt>
+                          <dd>{task.owner}</dd>
+                        </div>
+                        <div>
+                          <dt>Due Date</dt>
+                          <dd>{task.due || "Not set"}</dd>
+                        </div>
+                        <div>
+                          <dt>Status</dt>
+                          <dd>
+                            <span className={displayStatus === "overdue" ? "task-status overdue" : "task-status"}>
+                              {taskStatusLabel(displayStatus)}
+                            </span>
+                          </dd>
+                        </div>
+                      </dl>
+                    </div>
+                    <div className="task-card-actions">
+                      <button className="task-detail-button" type="button" onClick={() => onOpenTaskDetail(task)}>
+                        {selectedTaskId === task.id ? "Hide Details" : "Expand"}
+                      </button>
+                      <button type="button" onClick={() => onCompleteTask(task)}>
+                        Complete
+                      </button>
+                      <button type="button" onClick={() => onSnoozeTask(task)}>
+                        Snooze
+                      </button>
+                      <button type="button" onClick={() => onReassignTask(task)}>
+                        Reassign
+                      </button>
+                      <button type="button" onClick={() => onEditTask(task)}>
+                        Edit
+                      </button>
+                    </div>
+                  </article>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
       ))}
-    </ul>
+    </section>
   );
 }
 
@@ -1874,6 +2144,37 @@ function isVisibleTaskEntity(
   return visibleCompanyIds.has(entityId) || carrierIds.has(entityId);
 }
 
+function isActiveTask(task: Task) {
+  return task.status !== "completed" && task.status !== "cancelled";
+}
+
+function getTaskDisplayStatus(task: Task): Task["status"] {
+  if (isActiveTask(task) && isTaskOverdue(task)) {
+    return "overdue";
+  }
+
+  return task.status;
+}
+
+function parseTaskStatus(value: string | undefined): Task["status"] | null {
+  if (
+    value === "open" ||
+    value === "in_progress" ||
+    value === "waiting" ||
+    value === "completed" ||
+    value === "cancelled" ||
+    value === "overdue"
+  ) {
+    return value;
+  }
+
+  return null;
+}
+
+function shouldMarkTaskOverdue(task: Task) {
+  return task.status !== "overdue" && isActiveTask(task) && isTaskOverdue(task);
+}
+
 function isTaskDueToday(task: Task) {
   const due = task.due.trim().toLowerCase();
 
@@ -1881,15 +2182,17 @@ function isTaskDueToday(task: Task) {
     return true;
   }
 
-  const dueDate = parseDueDate(task.due);
+  const dueDate = parseDueDate(task.due, task.createdAt);
 
   if (!dueDate) {
     return false;
   }
 
   const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  dueDate.setHours(0, 0, 0, 0);
 
-  return dueDate.toDateString() === today.toDateString();
+  return dueDate.getTime() === today.getTime();
 }
 
 function isTaskOverdue(task: Task) {
@@ -1899,7 +2202,7 @@ function isTaskOverdue(task: Task) {
     return true;
   }
 
-  const dueDate = parseDueDate(task.due);
+  const dueDate = parseDueDate(task.due, task.createdAt);
 
   if (!dueDate) {
     return false;
@@ -1912,7 +2215,41 @@ function isTaskOverdue(task: Task) {
   return dueDate < today;
 }
 
-function parseDueDate(value: string) {
+function wasTaskCompletedToday(task: Task) {
+  if (!task.completedAt) {
+    return false;
+  }
+
+  const completedDate = new Date(task.completedAt);
+  const today = new Date();
+
+  return completedDate.toDateString() === today.toDateString();
+}
+
+function parseDueDate(value: string, createdAt?: string) {
+  const normalizedValue = value.trim().toLowerCase();
+  const baseDate = createdAt ? new Date(createdAt) : new Date();
+
+  if (normalizedValue === "today") {
+    return startOfDay(new Date());
+  }
+
+  if (normalizedValue === "tomorrow") {
+    return addDays(startOfDay(baseDate), 1);
+  }
+
+  if (normalizedValue === "next week") {
+    return addDays(startOfDay(baseDate), 7);
+  }
+
+  if (normalizedValue === "next monday" || normalizedValue === "monday") {
+    return nextWeekday(baseDate, 1);
+  }
+
+  if (normalizedValue === "friday") {
+    return nextWeekday(baseDate, 5);
+  }
+
   const timestamp = Date.parse(value);
 
   if (Number.isNaN(timestamp)) {
@@ -1920,6 +2257,88 @@ function parseDueDate(value: string) {
   }
 
   return new Date(timestamp);
+}
+
+function startOfDay(value: Date) {
+  const nextDate = new Date(value);
+  nextDate.setHours(0, 0, 0, 0);
+  return nextDate;
+}
+
+function addDays(value: Date, days: number) {
+  const nextDate = new Date(value);
+  nextDate.setDate(nextDate.getDate() + days);
+  return nextDate;
+}
+
+function nextWeekday(value: Date, weekday: number) {
+  const nextDate = startOfDay(value);
+  const currentDay = nextDate.getDay();
+  const dayOffset = (weekday - currentDay + 7) % 7 || 7;
+  nextDate.setDate(nextDate.getDate() + dayOffset);
+  return nextDate;
+}
+
+function compareTasksByDueThenCreated(firstTask: Task, secondTask: Task) {
+  const firstDue = parseDueDate(firstTask.due, firstTask.createdAt)?.getTime() ?? Number.MAX_SAFE_INTEGER;
+  const secondDue = parseDueDate(secondTask.due, secondTask.createdAt)?.getTime() ?? Number.MAX_SAFE_INTEGER;
+
+  if (firstDue !== secondDue) {
+    return firstDue - secondDue;
+  }
+
+  return firstTask.createdAt.localeCompare(secondTask.createdAt);
+}
+
+function doesTaskMatchSearch(task: Task, namesById: Record<string, string>, search: string) {
+  const normalizedSearch = search.trim().toLowerCase();
+
+  if (!normalizedSearch) {
+    return true;
+  }
+
+  const entityName = namesById[getTaskEntityId(task)] ?? task.sourceCompany;
+
+  return [task.title, entityName, task.owner]
+    .some((value) => value.toLowerCase().includes(normalizedSearch));
+}
+
+function groupTasksByOwner(tasks: Task[]) {
+  const ownerOrder = ["Brian", "Louie"];
+  const groupedTasks = tasks.reduce<Record<string, Task[]>>((groups, task) => {
+    return {
+      ...groups,
+      [task.owner]: [...(groups[task.owner] ?? []), task]
+    };
+  }, {});
+
+  return Object.entries(groupedTasks).sort(([firstOwner], [secondOwner]) => {
+    const firstIndex = ownerOrder.indexOf(firstOwner);
+    const secondIndex = ownerOrder.indexOf(secondOwner);
+
+    if (firstIndex !== -1 || secondIndex !== -1) {
+      return (firstIndex === -1 ? Number.MAX_SAFE_INTEGER : firstIndex) -
+        (secondIndex === -1 ? Number.MAX_SAFE_INTEGER : secondIndex);
+    }
+
+    return firstOwner.localeCompare(secondOwner);
+  });
+}
+
+function createTaskTimelineEvent(task: Task, title: string, detail: string): TimelineEntry | null {
+  if (task.entityType === "carrier") {
+    return null;
+  }
+
+  const now = new Date().toISOString();
+
+  return {
+    id: createUuid(),
+    companyId: task.companyId,
+    at: title,
+    body: detail,
+    createdAt: now
+  };
 }
 
 function companyNameById(companyItems: Company[]) {

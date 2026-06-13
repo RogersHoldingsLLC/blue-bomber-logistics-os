@@ -47,7 +47,7 @@ type TaskRow = {
   title: string;
   due: string | null;
   priority: Task["priority"];
-  status: Task["status"];
+  status: Task["status"] | "done";
   owner: string;
   created_by: string;
   source_company: string;
@@ -441,7 +441,7 @@ function fromTaskRow(row: TaskRow): Task {
     title: row.title,
     due: row.due ?? "",
     priority: row.priority,
-    status: row.status,
+    status: normalizeTaskStatus(row.status),
     createdAt: row.created_at,
     owner: row.owner,
     createdBy: row.created_by,
@@ -478,4 +478,8 @@ function formatSupabaseError(error: { message?: string; code?: string; details?:
     details: error.details,
     hint: error.hint
   };
+}
+
+function normalizeTaskStatus(status: TaskRow["status"]): Task["status"] {
+  return status === "done" ? "completed" : status;
 }
