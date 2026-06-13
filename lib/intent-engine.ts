@@ -8,6 +8,7 @@ type TaskIntentRule = {
   taskName: string;
   owner: IntentOwner;
   priority: Task["priority"];
+  due?: string;
 };
 
 type ActivityIntentRule = {
@@ -34,6 +35,20 @@ export type CarrierIntentResult = {
 };
 
 const taskIntentRules: TaskIntentRule[] = [
+  {
+    match: "call back tomorrow",
+    taskName: "Call Back Tomorrow",
+    owner: "sales",
+    priority: "normal",
+    due: "Tomorrow"
+  },
+  {
+    match: "call back monday",
+    taskName: "Call Back Monday",
+    owner: "sales",
+    priority: "normal",
+    due: "Monday"
+  },
   {
     match: "need better contacts",
     taskName: "Find Better Contact",
@@ -71,29 +86,29 @@ const taskIntentRules: TaskIntentRule[] = [
     priority: "normal"
   },
   {
-  match: "call",
-  taskName: "Call Contact",
-  owner: "sales",
-  priority: "normal"
-},
-{
-  match: "call back",
-  taskName: "Call Contact",
-  owner: "sales",
-  priority: "normal"
-},
-{
-  match: "reach out",
-  taskName: "Call Contact",
-  owner: "sales",
-  priority: "normal"
-},
-{
-  match: "check back",
-  taskName: "Call Contact",
-  owner: "sales",
-  priority: "normal"
-},
+    match: "call",
+    taskName: "Call Contact",
+    owner: "sales",
+    priority: "normal"
+  },
+  {
+    match: "call back",
+    taskName: "Call Contact",
+    owner: "sales",
+    priority: "normal"
+  },
+  {
+    match: "reach out",
+    taskName: "Call Contact",
+    owner: "sales",
+    priority: "normal"
+  },
+  {
+    match: "check back",
+    taskName: "Call Contact",
+    owner: "sales",
+    priority: "normal"
+  },
   {
     match: "follow up",
     taskName: "Follow Up",
@@ -131,6 +146,12 @@ const taskIntentRules: TaskIntentRule[] = [
     priority: "normal"
   },
   {
+    match: "email quote",
+    taskName: "Send Quote",
+    owner: "sales",
+    priority: "normal"
+  },
+  {
     match: "quote request",
     taskName: "Provide Quote",
     owner: "sales",
@@ -145,6 +166,30 @@ const taskIntentRules: TaskIntentRule[] = [
   {
     match: "need carrier base",
     taskName: "Build Carrier Base",
+    owner: "operations",
+    priority: "normal"
+  },
+  {
+    match: "need carrier setup",
+    taskName: "Carrier Setup",
+    owner: "operations",
+    priority: "normal"
+  },
+  {
+    match: "need coi",
+    taskName: "Get Updated COI",
+    owner: "operations",
+    priority: "high"
+  },
+  {
+    match: "need w9",
+    taskName: "Get W9",
+    owner: "operations",
+    priority: "normal"
+  },
+  {
+    match: "need noa",
+    taskName: "Get NOA",
     owner: "operations",
     priority: "normal"
   },
@@ -227,6 +272,7 @@ export function applyIntent(
   now = new Date()
 ): IntentResult {
   const normalizedNote = note.trim().toLowerCase();
+  const normalizedSentences = splitIntentSentences(note);
   const timestamp = now.toISOString();
   const today = "Today";
   const timelineEntry: TimelineEntry = {
@@ -236,7 +282,13 @@ export function applyIntent(
     body: note,
     createdAt: timestamp
   };
-  const matchedTaskRules = taskIntentRules.filter((rule) => normalizedNote.includes(rule.match));
+  const matchedTaskRules = normalizedSentences.flatMap((sentence) => findTaskRulesForSentence(sentence));
+
+  console.log("[Blue Bomber Intent] note received:", note);
+  console.log(
+    "[Blue Bomber Intent] intents detected:",
+    matchedTaskRules.map((rule) => rule.match)
+  );
 
   if (matchedTaskRules.length) {
     const generatedTasks = matchedTaskRules.reduce<Task[]>((uniqueTasks, taskRule) => {
@@ -258,7 +310,7 @@ export function applyIntent(
           entityId: company.id,
           entityType: company.status,
           title: taskRule.taskName,
-          due: taskRule.match === "call monday" ? "Monday" : "Next",
+          due: taskRule.due ?? "Next",
           priority: taskRule.priority,
           status: "open",
           createdAt: timestamp,
@@ -269,6 +321,16 @@ export function applyIntent(
         }
       ];
     }, []);
+
+    console.log(
+      "[Blue Bomber Intent] tasks created:",
+      generatedTasks.map((task) => ({
+        title: task.title,
+        owner: task.owner,
+        companyId: task.companyId,
+        sourceNote: task.sourceNote
+      }))
+    );
 
     return {
       company: {
@@ -281,6 +343,8 @@ export function applyIntent(
       timelineEntry
     };
   }
+
+  console.log("[Blue Bomber Intent] tasks created:", []);
 
   const activityRule = activityIntentRules.find((rule) => normalizedNote.includes(rule.match));
 
@@ -315,6 +379,28 @@ export function applyIntent(
     tasks: [],
     timelineEntry
   };
+}
+
+function splitIntentSentences(note: string) {
+  return note
+    .toLowerCase()
+    .split(/[\n.!?]+/)
+    .map((sentence) => sentence.trim())
+    .filter(Boolean);
+}
+
+function findTaskRulesForSentence(sentence: string) {
+  const matchedRules = taskIntentRules.filter((rule) => sentence.includes(rule.match));
+
+  return matchedRules.filter(
+    (rule) =>
+      !matchedRules.some(
+        (otherRule) =>
+          otherRule !== rule &&
+          otherRule.match.includes(rule.match) &&
+          otherRule.match.length > rule.match.length
+      )
+  );
 }
 
 export function applyCarrierIntent(note: string, carrier: Carrier, now = new Date()): CarrierIntentResult {

@@ -387,6 +387,7 @@ export default function Home() {
       const savedToSupabase = await saveSupabaseState(state);
 
       saveStoredState(state);
+      console.log("[Blue Bomber Supabase] save result:", savedToSupabase ? "Supabase success" : "localStorage fallback");
 
       if (!savedToSupabase) {
         console.log("[Blue Bomber Supabase] localStorage fallback used:", reason);
