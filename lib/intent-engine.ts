@@ -35,6 +35,30 @@ export type CarrierIntentResult = {
 
 const taskIntentRules: TaskIntentRule[] = [
   {
+    match: "need better contacts",
+    taskName: "Find Better Contact",
+    owner: "operations",
+    priority: "normal"
+  },
+  {
+    match: "need better contact",
+    taskName: "Find Better Contact",
+    owner: "operations",
+    priority: "normal"
+  },
+  {
+    match: "better contacts",
+    taskName: "Find Better Contact",
+    owner: "operations",
+    priority: "normal"
+  },
+  {
+    match: "better contact",
+    taskName: "Find Better Contact",
+    owner: "operations",
+    priority: "normal"
+  },
+  {
     match: "need better number",
     taskName: "Find Better Number",
     owner: "operations",
@@ -78,6 +102,30 @@ const taskIntentRules: TaskIntentRule[] = [
   },
   {
     match: "need email",
+    taskName: "Send Email",
+    owner: "sales",
+    priority: "normal"
+  },
+  {
+    match: "send email",
+    taskName: "Send Email",
+    owner: "sales",
+    priority: "normal"
+  },
+  {
+    match: "email them",
+    taskName: "Send Email",
+    owner: "sales",
+    priority: "normal"
+  },
+  {
+    match: "email customer",
+    taskName: "Send Email",
+    owner: "sales",
+    priority: "normal"
+  },
+  {
+    match: "email prospect",
     taskName: "Send Email",
     owner: "sales",
     priority: "normal"
