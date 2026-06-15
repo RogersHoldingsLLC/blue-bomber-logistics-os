@@ -23,7 +23,27 @@ import {
 import { createUuid } from "@/lib/uuid";
 import type { Carrier, Company, CompanyStatus, Contact, Task, TimelineEntry } from "@/types";
 
-type ProfileTab = "command" | "contacts" | "qualify" | "snapshot";
+type ProfileTab = "tasks" | "contacts" | "freight" | "files";
+type QuickCreateType = "prospect" | "customer" | "carrier";
+type ManualContactInput = {
+  name: string;
+  role: string;
+  phone: string;
+  email: string;
+};
+type ManualTaskInput = {
+  title: string;
+  owner: string;
+  due: string;
+  priority: Task["priority"];
+};
+type ProfileTimelineRow = {
+  id: string;
+  title: string;
+  detail: string;
+  createdAt: string;
+  type: "timeline" | "task";
+};
 type ThemeMode = "light" | "dark";
 type AppView =
   | "home"
@@ -57,14 +77,77 @@ const taskFilters: Array<{ id: TaskFilter; label: string }> = [
 ];
 
 const profileTabs: Array<{ id: ProfileTab; label: string }> = [
-  { id: "command", label: "ACTIVITY NOTES" },
+  { id: "tasks", label: "Tasks" },
   { id: "contacts", label: "Contacts" },
-  { id: "qualify", label: "Qualify" },
-  { id: "snapshot", label: "Snapshot" }
+  { id: "freight", label: "Freight Op" },
+  { id: "files", label: "Files" }
 ];
 
 function statusLabel(status: CompanyStatus) {
   return status === "prospect" ? "Prospect" : "Customer";
+}
+
+function formatCompanyMeta(company: Company) {
+  const location = [company.city, company.state]
+    .filter((value) => value && value.toLowerCase() !== "lead")
+    .join(", ");
+  const fallback = statusLabel(company.status);
+
+  return `${location || fallback} · ${company.segment || fallback}`;
+}
+
+function formatLocation(company: Company) {
+  return [company.city, company.state]
+    .filter((value) => value && value.toLowerCase() !== "lead")
+    .join(", ") || "Not set";
+}
+
+function getPrimaryContact(company: Company, contacts: Contact[]) {
+  return contacts.find((contact) => contact.id === company.primaryContactId) ?? contacts[0] ?? null;
+}
+
+function getCompanyWebsite(company: Company) {
+  const websiteLine = company.smartNotes
+    .split("\n")
+    .find((line) => line.trim().toLowerCase().startsWith("website:"));
+
+  return websiteLine?.replace(/^website:\s*/i, "").trim() || "";
+}
+
+function getCompanyTimelineRows(company: Company, timeline: TimelineEntry[]): ProfileTimelineRow[] {
+  return timeline
+    .filter((entry) => entry.companyId === company.id)
+    .map((entry) => ({
+      id: entry.id,
+      title: entry.at,
+      detail: entry.body,
+      createdAt: entry.createdAt,
+      type: "timeline" as const
+    }))
+    .sort((firstEntry, secondEntry) => secondEntry.createdAt.localeCompare(firstEntry.createdAt));
+}
+
+function buildAccountSummary(
+  company: Company,
+  contacts: Contact[],
+  openTasks: Task[],
+  timelineRows: ProfileTimelineRow[]
+) {
+  const location = formatLocation(company);
+  const primaryContact = getPrimaryContact(company, contacts);
+  const latestNote = timelineRows[0]?.detail;
+  const taskSentence = openTasks.length
+    ? `${openTasks.length} open task${openTasks.length === 1 ? "" : "s"} need attention, led by ${openTasks[0].owner} on ${openTasks[0].title}.`
+    : "There are no open tasks on this account right now.";
+
+  return [
+    `${company.name} is a ${statusLabel(company.status).toLowerCase()} account${location === "Not set" ? "" : ` in ${location}`}${company.segment ? ` for ${company.segment.toLowerCase()} work` : ""}.`,
+    primaryContact
+      ? `${primaryContact.name}${primaryContact.role ? ` handles ${primaryContact.role.toLowerCase()}` : " is the primary contact"}${primaryContact.phone ? ` and can be reached at ${primaryContact.phone}` : ""}.`
+      : "No primary contact is set yet.",
+    latestNote ? `Most recent note: ${latestNote}` : `${contacts.length} contact${contacts.length === 1 ? "" : "s"} saved on the account.`,
+    `${taskSentence} Freight opportunity: ${company.currentOpportunity || "Not set yet."}`
+  ].slice(0, 4);
 }
 
 function taskStatusLabel(status: Task["status"]) {
@@ -93,8 +176,9 @@ export default function Home() {
   const [currentView, setCurrentView] = useState<AppView>("home");
   const [taskFilter, setTaskFilter] = useState<TaskFilter>("today");
   const [taskSearch, setTaskSearch] = useState("");
-  const [activeProfileTab, setActiveProfileTab] = useState<ProfileTab>("command");
+  const [showTaskAdvanced, setShowTaskAdvanced] = useState(false);
   const [showProspectForm, setShowProspectForm] = useState(false);
+  const [quickCreateType, setQuickCreateType] = useState<QuickCreateType>("prospect");
   const [prospectName, setProspectName] = useState("");
   const [carrierNote, setCarrierNote] = useState("");
   const [themeMode, setThemeMode] = useState<ThemeMode>("light");
@@ -305,7 +389,7 @@ export default function Home() {
     ? tasks.filter((task) => getTaskEntityType(task, companies, carrierItems) === "carrier" && getTaskEntityId(task) === selectedCarrier.id)
     : [];
   const companyContacts = selectedCompany
-    ? contacts.filter((contact) => contact.companyId === selectedCompany.id).slice(0, 3)
+    ? contacts.filter((contact) => contact.companyId === selectedCompany.id)
     : [];
   const prospectCompanies = visibleCompanies.filter((company) => company.status === "prospect");
   const customerCompanies = visibleCompanies.filter((company) => company.status === "customer");
@@ -321,7 +405,6 @@ export default function Home() {
     setSelectedCompanyId(company.id);
     setSelectedCarrierId(null);
     setSelectedTaskId(null);
-    setActiveProfileTab("command");
     setCurrentView(company.status === "customer" ? "customer-profile" : "prospect-profile");
   }
 
@@ -349,7 +432,6 @@ export default function Home() {
 
     setSelectedCompanyId(company.id);
     setSelectedCarrierId(null);
-    setActiveProfileTab("command");
     setCurrentView(company.status === "customer" ? "customer-profile" : "prospect-profile");
   }
 
@@ -377,7 +459,6 @@ export default function Home() {
     setSelectedCompanyId(company.id);
     setSelectedCarrierId(null);
     setSelectedTaskId(null);
-    setActiveProfileTab("command");
     setCurrentView(company.status === "customer" ? "customer-profile" : "prospect-profile");
   }
 
@@ -546,14 +627,35 @@ export default function Home() {
       return;
     }
 
+    if (quickCreateType === "carrier") {
+      const newCarrier: Carrier = {
+        id: createUuid(),
+        name: trimmedName,
+        city: "New",
+        state: "Carrier",
+        equipment: "Equipment TBD"
+      };
+      const nextCarriers = [newCarrier, ...carrierItems];
+
+      setCarrierItems(nextCarriers);
+      persistState({ carriers: nextCarriers }, "creating carrier");
+      setSelectedCarrierId(newCarrier.id);
+      setSelectedCompanyId(null);
+      setCurrentView("carrier-profile");
+      setProspectName("");
+      setShowProspectForm(false);
+      return;
+    }
+
+    const companyStatus = quickCreateType === "customer" ? "customer" : "prospect";
     const newCompany: Company = {
       id: createUuid(),
       name: trimmedName,
-      status: "prospect",
+      status: companyStatus,
       city: "New",
-      state: "Lead",
-      segment: "Prospect",
-      currentOpportunity: "New prospect. Add opportunity details after first contact.",
+      state: statusLabel(companyStatus),
+      segment: statusLabel(companyStatus),
+      currentOpportunity: `New ${statusLabel(companyStatus).toLowerCase()}. Add freight notes after first contact.`,
       smartNotes: "",
       salesLead: "Louie",
       operationsLead: "Brian",
@@ -572,10 +674,102 @@ export default function Home() {
     persistState({ companies: nextCompanies }, "creating company");
     setSelectedCompanyId(newCompany.id);
     setSelectedCarrierId(null);
-    setCurrentView("prospect-profile");
-    setActiveProfileTab("command");
+    setCurrentView(companyStatus === "customer" ? "customer-profile" : "prospect-profile");
     setProspectName("");
     setShowProspectForm(false);
+  }
+
+  function openQuickCreate(type: QuickCreateType) {
+    setQuickCreateType(type);
+    setProspectName("");
+    setShowProspectForm(true);
+  }
+
+  function addManualContact(company: Company, values: ManualContactInput) {
+    const trimmedName = values.name.trim();
+
+    if (!trimmedName) {
+      return;
+    }
+
+    const now = new Date().toISOString();
+    const newContact: Contact = {
+      id: createUuid(),
+      companyId: company.id,
+      name: trimmedName,
+      role: values.role.trim(),
+      phone: values.phone.trim(),
+      email: values.email.trim(),
+      lastContact: ""
+    };
+    const nextContacts = [newContact, ...contacts];
+    const nextCompanies = companies.map((companyItem) =>
+      companyItem.id === company.id
+        ? {
+            ...companyItem,
+            primaryContactId: companyItem.primaryContactId || newContact.id,
+            lastActivity: "Today"
+          }
+        : companyItem
+    );
+    const nextTimeline = [
+      {
+        id: createUuid(),
+        companyId: company.id,
+        at: "Contact Added",
+        body: `${newContact.name}${newContact.role ? `, ${newContact.role}` : ""}`,
+        createdAt: now
+      },
+      ...timeline
+    ];
+
+    setContacts(nextContacts);
+    setCompanies(nextCompanies);
+    setTimeline(nextTimeline);
+    persistState({
+      companies: nextCompanies,
+      contacts: nextContacts,
+      timeline: nextTimeline
+    }, "adding manual contact");
+  }
+
+  function addManualTask(company: Company, values: ManualTaskInput) {
+    const trimmedTitle = values.title.trim();
+
+    if (!trimmedTitle) {
+      return;
+    }
+
+    const now = new Date().toISOString();
+    const newTask: Task = {
+      id: createUuid(),
+      companyId: company.id,
+      entityId: company.id,
+      entityType: company.status,
+      title: trimmedTitle,
+      due: values.due.trim() || "Today",
+      priority: values.priority,
+      status: "open",
+      createdAt: now,
+      owner: values.owner.trim() || "Louie",
+      createdBy: "Manual",
+      sourceCompany: company.name,
+      sourceNote: "Manual task"
+    };
+    const taskTimelineEvent = createTaskTimelineEvent(
+      newTask,
+      "Task Created",
+      `${newTask.title} created for ${newTask.owner}.`
+    );
+    const nextTasks = [newTask, ...tasks];
+    const nextTimeline = taskTimelineEvent ? [taskTimelineEvent, ...timeline] : timeline;
+
+    setTasks(nextTasks);
+    setTimeline(nextTimeline);
+    persistState({
+      tasks: nextTasks,
+      timeline: nextTimeline
+    }, "adding manual task");
   }
 
   function deleteCompany(company: Company) {
@@ -642,9 +836,9 @@ export default function Home() {
           name: row.companyName,
           status: row.status,
           city: "Imported",
-          state: "Lead",
-          segment: "Prospect",
-          currentOpportunity: "Imported prospect. Add opportunity details after first contact.",
+          state: statusLabel(row.status),
+          segment: statusLabel(row.status),
+          currentOpportunity: "Imported prospect. Add freight notes after first contact.",
           smartNotes,
           salesLead: row.salesLead || "Louie",
           operationsLead: row.operationsLead || "Brian",
@@ -798,7 +992,10 @@ export default function Home() {
     <main className="shell">
       <section className="topbar" aria-label="Home">
         <div>
-          <p className="app-label">Blue Bomber Logistics OS</p>
+          <div className="brand-lockup">
+            <span className="brand-mark" aria-hidden="true">BB</span>
+            <p className="app-label">Blue Bomber Command Center</p>
+          </div>
           <h1>{pageTitle}</h1>
         </div>
         <div className="topbar-actions">
@@ -808,7 +1005,7 @@ export default function Home() {
               type="button"
               onClick={() => openView("home")}
             >
-              Tasks
+              Today&apos;s Tasks
             </button>
             <button
               className={currentView === "prospects" || currentView === "prospect-profile" ? "active" : ""}
@@ -850,14 +1047,22 @@ export default function Home() {
               Dark
             </button>
           </div>
-          <button className="primary-action" type="button" onClick={() => setShowProspectForm(true)}>
-            + Prospect
-          </button>
+          <div className="quick-actions" aria-label="Quick Actions">
+            <button className="primary-action" type="button" onClick={() => openQuickCreate("prospect")}>
+              Add Prospect
+            </button>
+            <button className="secondary-action" type="button" onClick={() => openQuickCreate("customer")}>
+              Add Customer
+            </button>
+            <button className="secondary-action" type="button" onClick={() => openQuickCreate("carrier")}>
+              Add Carrier
+            </button>
+          </div>
         </div>
       </section>
 
       {showProspectForm ? (
-        <section className="prospect-form" aria-label="Add prospect">
+        <section className="prospect-form" aria-label={`Add ${quickCreateType}`}>
           <input
             autoFocus
             value={prospectName}
@@ -867,10 +1072,10 @@ export default function Home() {
                 addProspect();
               }
             }}
-            placeholder="Company name"
+            placeholder={quickCreateType === "carrier" ? "Carrier name" : "Company name"}
           />
           <button type="button" onClick={addProspect}>
-            Add
+            Add {quickCreateType === "carrier" ? "Carrier" : statusLabel(quickCreateType)}
           </button>
           <button type="button" className="ghost" onClick={() => setShowProspectForm(false)}>
             Cancel
@@ -882,50 +1087,69 @@ export default function Home() {
         <section className="task-centerpiece home-tasks" aria-label="TASK DASHBOARD">
           <div className="task-centerpiece-header">
             <div>
-              <span>TASK DASHBOARD</span>
-              <h2>TODAY&apos;S TASKS</h2>
+              <h2>Command Center</h2>
             </div>
-            <span>{taskItems.length} shown · {taskCounters.open} open</span>
+            {showTaskAdvanced ? <span>{taskItems.length} shown · {taskCounters.open} open</span> : null}
           </div>
-          <div className="task-counters" aria-label="Task counters">
-            <div>
-              <span>Open Tasks</span>
-              <strong>{taskCounters.open}</strong>
-            </div>
-            <div>
-              <span>Due Today</span>
-              <strong>{taskCounters.dueToday}</strong>
-            </div>
-            <div>
-              <span>Overdue</span>
-              <strong>{taskCounters.overdue}</strong>
-            </div>
-            <div>
-              <span>Completed Today</span>
-              <strong>{taskCounters.completedToday}</strong>
-            </div>
+          <div className="task-more-row">
+            <button className="secondary-action" type="button" onClick={() => setShowTaskAdvanced((value) => !value)}>
+              {showTaskAdvanced ? "Less" : "More"}
+            </button>
           </div>
-          <div className="tabs task-filter-tabs" role="tablist" aria-label="Task filter">
-            {taskFilters.map((filter) => (
-              <button
-                aria-selected={taskFilter === filter.id}
-                className={taskFilter === filter.id ? "active" : ""}
-                key={filter.id}
-                onClick={() => setTaskFilter(filter.id)}
-                role="tab"
-                type="button"
-              >
-                {filter.label}
-              </button>
-            ))}
-          </div>
-          <input
-            className="task-search"
-            value={taskSearch}
-            onChange={(event) => setTaskSearch(event.target.value)}
-            placeholder="Search tasks, company, owner"
-            type="search"
-          />
+          {showTaskAdvanced ? (
+            <>
+              <div className="home-shortcuts" aria-label="Work lists">
+                <button type="button" onClick={() => openView("prospects")}>
+                  Prospects
+                </button>
+                <button type="button" onClick={() => openView("customers")}>
+                  Customers
+                </button>
+                <button type="button" onClick={() => openView("carriers")}>
+                  Carriers
+                </button>
+              </div>
+              <div className="task-counters" aria-label="Task counters">
+                <div>
+                  <span>Open Tasks</span>
+                  <strong>{taskCounters.open}</strong>
+                </div>
+                <div>
+                  <span>Due Today</span>
+                  <strong>{taskCounters.dueToday}</strong>
+                </div>
+                <div>
+                  <span>Overdue</span>
+                  <strong>{taskCounters.overdue}</strong>
+                </div>
+                <div>
+                  <span>Completed Today</span>
+                  <strong>{taskCounters.completedToday}</strong>
+                </div>
+              </div>
+              <div className="tabs task-filter-tabs" role="tablist" aria-label="Task filter">
+                {taskFilters.map((filter) => (
+                  <button
+                    aria-selected={taskFilter === filter.id}
+                    className={taskFilter === filter.id ? "active" : ""}
+                    key={filter.id}
+                    onClick={() => setTaskFilter(filter.id)}
+                    role="tab"
+                    type="button"
+                  >
+                    {filter.label}
+                  </button>
+                ))}
+              </div>
+              <input
+                className="task-search"
+                value={taskSearch}
+                onChange={(event) => setTaskSearch(event.target.value)}
+                placeholder="Search tasks, company, owner"
+                type="search"
+              />
+            </>
+          ) : null}
           <TaskDashboard
             entityNameById={taskEntityNameById}
             onCompleteTask={completeTask}
@@ -937,6 +1161,7 @@ export default function Home() {
             selectedTaskId={selectedTaskId}
             taskFilter={taskFilter}
             taskItems={taskItems}
+            showAdvanced={showTaskAdvanced}
           />
           {selectedTask ? (
             <TaskDetail
@@ -985,9 +1210,10 @@ export default function Home() {
       {(currentView === "prospect-profile" || currentView === "customer-profile") && selectedCompany ? (
         <>
           <CompanyProfile
-            activeTab={activeProfileTab}
             company={selectedCompany}
             contacts={companyContacts}
+            onAddManualContact={(values) => addManualContact(selectedCompany, values)}
+            onAddManualTask={(values) => addManualTask(selectedCompany, values)}
             onDeleteCompany={() => deleteCompany(selectedCompany)}
             onSmartNotesChange={(smartNotes) => {
               setCompanies((currentCompanies) => {
@@ -995,7 +1221,7 @@ export default function Home() {
                   company.id === selectedCompany.id ? { ...company, smartNotes } : company
                 );
 
-                persistState({ companies: nextCompanies }, "updating Activity Notes");
+                persistState({ companies: nextCompanies }, "updating Call Notes");
 
                 return nextCompanies;
               });
@@ -1041,7 +1267,6 @@ export default function Home() {
               });
               window.setTimeout(() => setNoteResult(null), 5000);
             }}
-            onTabChange={setActiveProfileTab}
             tasks={selectedCompanyTasks}
             timeline={timeline}
             noteResult={noteResult}
@@ -1129,6 +1354,7 @@ function CompanyListPage({
 }) {
   const isProspectList = title === "Prospect List";
   const hasBulkSelection = selectedBulkProspectIds.length > 0;
+  const [showListManagement, setShowListManagement] = useState(false);
 
   return (
     <section className="list-page" aria-label={title}>
@@ -1137,34 +1363,41 @@ function CompanyListPage({
           <h2>{title}</h2>
           <span>{companies.length} active</span>
         </div>
-        {isProspectList && importInputRef ? (
-          <div className="import-control">
-            <button type="button" onClick={() => importInputRef.current?.click()} disabled={isImporting}>
-              {isImporting ? "Importing" : "Import"}
-            </button>
-            <input
-              ref={importInputRef}
-              accept=".csv,.xlsx"
-              aria-label="Import prospects"
-              type="file"
-              onChange={(event) => {
-                const file = event.target.files?.[0];
+        {isProspectList ? (
+          <div className="list-header-actions">
+            {importInputRef ? (
+              <div className="import-control">
+                <button type="button" onClick={() => importInputRef.current?.click()} disabled={isImporting}>
+                  {isImporting ? "Importing" : "Import"}
+                </button>
+                <input
+                  ref={importInputRef}
+                  accept=".csv,.xlsx"
+                  aria-label="Import prospects"
+                  type="file"
+                  onChange={(event) => {
+                    const file = event.target.files?.[0];
 
-                if (file) {
-                  void onImportFile(file);
-                }
-              }}
-            />
-            {importResult ? (
-              <span>
-                Imported {importResult.imported} · Skipped {importResult.skipped}
-              </span>
+                    if (file) {
+                      void onImportFile(file);
+                    }
+                  }}
+                />
+                {importResult ? (
+                  <span>
+                    Imported {importResult.imported} · Skipped {importResult.skipped}
+                  </span>
+                ) : null}
+              </div>
             ) : null}
+            <button className="secondary-action" type="button" onClick={() => setShowListManagement((value) => !value)}>
+              {showListManagement ? "Done" : "Manage List"}
+            </button>
           </div>
         ) : null}
       </div>
 
-      {isProspectList ? (
+      {isProspectList && showListManagement ? (
         <div className="bulk-control list-bulk-control" aria-label="Bulk prospect actions">
           <div className="bulk-actions horizontal">
             <span>{selectedBulkProspectIds.length} selected</span>
@@ -1203,7 +1436,7 @@ function CompanyListPage({
       <ul className="record-list">
         {companies.map((company) => (
           <li key={company.id}>
-            {isProspectList ? (
+            {isProspectList && showListManagement ? (
               <input
                 aria-label={`Select ${company.name}`}
                 checked={selectedBulkProspectIds.includes(company.id)}
@@ -1215,7 +1448,7 @@ function CompanyListPage({
               <span>{statusLabel(company.status)}</span>
               <strong>{company.name}</strong>
               <small>
-                {company.city}, {company.state} · {company.segment}
+                {formatCompanyMeta(company)}
               </small>
             </button>
           </li>
@@ -1267,23 +1500,27 @@ function CarrierProfile({
   onAddNote: () => void;
   onNoteChange: (note: string) => void;
 }) {
+  const [showCarrierDetails, setShowCarrierDetails] = useState(false);
+
   return (
     <section className="profile" aria-label="Carrier Profile">
       <div className="profile-header">
         <div>
-          <span className="snapshot-label">Snapshot</span>
           <span className="status">Carrier</span>
           <h2>{carrier.name}</h2>
           <p>
             {carrier.city}, {carrier.state} · {carrier.equipment}
           </p>
         </div>
+        <button className="secondary-action" type="button" onClick={() => setShowCarrierDetails((value) => !value)}>
+          {showCarrierDetails ? "Less" : "More"}
+        </button>
       </div>
 
-      <section className="command-timeline" aria-label="ACTIVITY NOTES">
+      <section className="command-timeline" aria-label="Call Notes">
         <div className="command-center">
           <div className="command-center-header">
-            <h3>ACTIVITY NOTES</h3>
+            <h3>Call Notes</h3>
             <p>Type notes naturally. Blue Bomber OS will detect tasks and activities automatically.</p>
           </div>
           <textarea
@@ -1309,12 +1546,14 @@ Confirm delivery`}
           {noteResult ? <NoteSavedMessage tasks={noteResult.tasks} /> : null}
         </div>
 
-        <div className="current-opportunity">
-          <span>Carrier Snapshot</span>
-          <strong>{carrier.equipment}</strong>
-        </div>
+        {showCarrierDetails ? (
+          <div className="current-opportunity">
+            <span>Carrier Details</span>
+            <strong>{carrier.equipment}</strong>
+          </div>
+        ) : null}
         <div className="timeline-stream">
-          <h3>Carrier Tasks</h3>
+          <h3>Next Actions</h3>
           {tasks.length ? (
             tasks.map((task) => (
               <div className="timeline-item task-event" key={task.id}>
@@ -1332,7 +1571,6 @@ Confirm delivery`}
 }
 
 function CompanyProfile({
-  activeTab,
   company,
   contacts: companyContacts,
   tasks: companyTasks,
@@ -1340,10 +1578,10 @@ function CompanyProfile({
   noteResult,
   onSmartNotesChange,
   onAddNote,
-  onDeleteCompany,
-  onTabChange
+  onAddManualContact,
+  onAddManualTask,
+  onDeleteCompany
 }: {
-  activeTab: ProfileTab;
   company: Company;
   contacts: typeof seedContacts;
   tasks: Task[];
@@ -1351,37 +1589,75 @@ function CompanyProfile({
   noteResult: { tasks: Array<{ title: string; owner: string }> } | null;
   onSmartNotesChange: (smartNotes: string) => void;
   onAddNote: () => void;
+  onAddManualContact: (values: ManualContactInput) => void;
+  onAddManualTask: (values: ManualTaskInput) => void;
   onDeleteCompany: () => void;
-  onTabChange: (tab: ProfileTab) => void;
 }) {
+  const [expandedSection, setExpandedSection] = useState<ProfileTab | null>(null);
+  const primaryContact = getPrimaryContact(company, companyContacts);
+  const openTasks = companyTasks.filter(isActiveTask).sort(compareTasksByDueThenCreated);
+  const timelineRows = getCompanyTimelineRows(company, timeline);
+  const accountSummary = buildAccountSummary(company, companyContacts, openTasks, timelineRows);
+
+  function toggleSection(tab: ProfileTab) {
+    setExpandedSection((currentSection) => (currentSection === tab ? null : tab));
+  }
+
   return (
     <section className="profile" aria-label="Company Profile">
-      <div className="profile-header">
-        <div>
-          <span className="snapshot-label">Snapshot</span>
+      <div className="profile-top-row">
+        <section className="account-card" aria-label="Account Card">
           <span className="status">{statusLabel(company.status)}</span>
           <h2>{company.name}</h2>
-          <p>
-            {company.city}, {company.state} · {company.segment}
-          </p>
-        </div>
-        <div className="profile-actions">
-          <button className="files-button" type="button">
-            Files
-          </button>
-          <button className="delete-button" type="button" onClick={onDeleteCompany}>
-            Delete
-          </button>
-        </div>
+          <dl>
+            <div>
+              <dt>City / State</dt>
+              <dd>{formatLocation(company)}</dd>
+            </div>
+            {primaryContact?.phone ? (
+              <div>
+                <dt>Phone</dt>
+                <dd>{primaryContact.phone}</dd>
+              </div>
+            ) : null}
+            {getCompanyWebsite(company) ? (
+              <div>
+                <dt>Website</dt>
+                <dd>{getCompanyWebsite(company)}</dd>
+              </div>
+            ) : null}
+            {primaryContact ? (
+              <div>
+                <dt>Primary Contact</dt>
+                <dd>{primaryContact.name}</dd>
+              </div>
+            ) : null}
+            <div>
+              <dt>Last Contact</dt>
+              <dd>{company.lastContact || primaryContact?.lastContact || "Not set"}</dd>
+            </div>
+            <div>
+              <dt>Open Tasks</dt>
+              <dd>{openTasks.length}</dd>
+            </div>
+          </dl>
+        </section>
+
+        <section className="account-summary" aria-label="Account Summary">
+          <h3>Account Summary</h3>
+          {accountSummary.map((sentence) => (
+            <p key={sentence}>{sentence}</p>
+          ))}
+        </section>
       </div>
 
-      <div className="tabs profile-tabs" role="tablist" aria-label="Company profile sections">
+      <div className="profile-section-buttons" role="tablist" aria-label="Account sections">
         {profileTabs.map((tab) => (
           <button
-            aria-selected={activeTab === tab.id}
-            className={activeTab === tab.id ? "active" : ""}
+            aria-selected={expandedSection === tab.id}
+            className={expandedSection === tab.id ? "active" : ""}
             key={tab.id}
-            onClick={() => onTabChange(tab.id)}
+            onClick={() => toggleSection(tab.id)}
             role="tab"
             type="button"
           >
@@ -1390,134 +1666,186 @@ function CompanyProfile({
         ))}
       </div>
 
-      {activeTab === "command" ? (
-        <CommandTimeline
-          company={company}
-          companyTasks={companyTasks}
-          timeline={timeline}
-          noteResult={noteResult}
-          onSmartNotesChange={onSmartNotesChange}
-          onAddNote={onAddNote}
-        />
+      {expandedSection === "tasks" ? (
+        <ProfileTasksSection tasks={openTasks} onAddManualTask={onAddManualTask} />
       ) : null}
 
-      {activeTab === "contacts" ? (
-        <Panel title="Contacts (3)">
-          <ul className="contact-list">
-            {companyContacts.map((contact) => (
-              <li key={contact.id}>
-                <strong>{contact.name}</strong>
-                <span>{contact.role}</span>
-                <span>{contact.email}</span>
-                <span>{contact.phone}</span>
-                {contact.lastContact ? <span>Last contact: {contact.lastContact}</span> : null}
-              </li>
-            ))}
-          </ul>
+      {expandedSection === "contacts" ? (
+        <ProfileContactsSection contacts={companyContacts} onAddManualContact={onAddManualContact} />
+      ) : null}
+
+      {expandedSection === "freight" ? (
+        <Panel title="Freight Op">
+          <p>{company.currentOpportunity}</p>
         </Panel>
       ) : null}
 
-      {activeTab === "qualify" ? (
-        <Panel title="5 Qualifying Questions">
-          <ol className="question-list">
-            {qualifyingQuestions.map((question) => (
-              <li key={question}>
-                <strong>{question}</strong>
-                <span>{company.qualifyingQuestions[question] || "Not answered yet"}</span>
-              </li>
-            ))}
-          </ol>
+      {expandedSection === "files" ? (
+        <Panel title="Files">
+          <p className="empty">Files placeholder.</p>
+          <div className="profile-actions">
+            <button className="files-button" type="button">
+              Files
+            </button>
+            <button className="delete-button" type="button" onClick={onDeleteCompany}>
+              Delete Account
+            </button>
+          </div>
         </Panel>
       ) : null}
 
-      {activeTab === "snapshot" ? (
-        <div className="profile-grid">
-          <Panel title="Company Snapshot">
-            <dl className="snapshot">
-              <div>
-                <dt>Status</dt>
-                <dd>{statusLabel(company.status)}</dd>
-              </div>
-              <div>
-                <dt>Segment</dt>
-                <dd>{company.segment}</dd>
-              </div>
-              <div>
-                <dt>Location</dt>
-                <dd>
-                  {company.city}, {company.state}
-                </dd>
-              </div>
-              <div>
-                <dt>Sales Lead</dt>
-                <dd>{company.salesLead}</dd>
-              </div>
-              <div>
-                <dt>Operations Lead</dt>
-                <dd>{company.operationsLead}</dd>
-              </div>
-              <div>
-                <dt>Last Contact</dt>
-                <dd>{company.lastContact || "Not set"}</dd>
-              </div>
-              <div>
-                <dt>Last Activity</dt>
-                <dd>{company.lastActivity || "Not set"}</dd>
-              </div>
-            </dl>
-          </Panel>
+      <CommandTimeline
+        company={company}
+        timelineRows={timelineRows}
+        noteResult={noteResult}
+        onSmartNotesChange={onSmartNotesChange}
+        onAddNote={onAddNote}
+      />
+    </section>
+  );
+}
 
-          <Panel title="Current Opportunity">
-            <p>{company.currentOpportunity}</p>
-          </Panel>
+function ProfileTasksSection({
+  tasks,
+  onAddManualTask
+}: {
+  tasks: Task[];
+  onAddManualTask: (values: ManualTaskInput) => void;
+}) {
+  const [showForm, setShowForm] = useState(false);
+  const [title, setTitle] = useState("");
+  const [owner, setOwner] = useState("Louie");
+  const [due, setDue] = useState("Today");
+  const [priority, setPriority] = useState<Task["priority"]>("normal");
+
+  function submitTask() {
+    onAddManualTask({ title, owner, due, priority });
+    setTitle("");
+    setOwner("Louie");
+    setDue("Today");
+    setPriority("normal");
+    setShowForm(false);
+  }
+
+  return (
+    <Panel title="Tasks">
+      <div className="profile-section-heading">
+        <span>{tasks.length} open</span>
+        <button className="secondary-action" type="button" onClick={() => setShowForm((value) => !value)}>
+          + Task
+        </button>
+      </div>
+      {showForm ? (
+        <div className="manual-form" aria-label="Add manual task">
+          <input value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Task Name" />
+          <input value={owner} onChange={(event) => setOwner(event.target.value)} placeholder="Owner" />
+          <input value={due} onChange={(event) => setDue(event.target.value)} placeholder="Due" />
+          <select
+            value={priority}
+            onChange={(event) => setPriority(event.target.value as Task["priority"])}
+            aria-label="Priority"
+          >
+            <option value="low">Low</option>
+            <option value="normal">Normal</option>
+            <option value="high">High</option>
+            <option value="critical">Critical</option>
+          </select>
+          <button type="button" onClick={submitTask}>
+            Save Task
+          </button>
         </div>
       ) : null}
-    </section>
+      {tasks.length ? (
+        <ul className="compact-profile-list">
+          {tasks.map((task) => (
+            <li key={task.id}>
+              <strong>{task.title}</strong>
+              <span>{task.owner} · {task.due} · {taskStatusLabel(getTaskDisplayStatus(task))}</span>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="empty">No open tasks.</p>
+      )}
+    </Panel>
+  );
+}
+
+function ProfileContactsSection({
+  contacts,
+  onAddManualContact
+}: {
+  contacts: typeof seedContacts;
+  onAddManualContact: (values: ManualContactInput) => void;
+}) {
+  const [showForm, setShowForm] = useState(false);
+  const [name, setName] = useState("");
+  const [role, setRole] = useState("");
+  const [phone, setPhone] = useState("");
+  const [email, setEmail] = useState("");
+
+  function submitContact() {
+    onAddManualContact({ name, role, phone, email });
+    setName("");
+    setRole("");
+    setPhone("");
+    setEmail("");
+    setShowForm(false);
+  }
+
+  return (
+    <Panel title="Contacts">
+      <div className="profile-section-heading">
+        <span>{contacts.length} saved</span>
+        <button className="secondary-action" type="button" onClick={() => setShowForm((value) => !value)}>
+          + Contact
+        </button>
+      </div>
+      {showForm ? (
+        <div className="manual-form" aria-label="Add manual contact">
+          <input value={name} onChange={(event) => setName(event.target.value)} placeholder="Name" />
+          <input value={role} onChange={(event) => setRole(event.target.value)} placeholder="Role" />
+          <input value={phone} onChange={(event) => setPhone(event.target.value)} placeholder="Phone" />
+          <input value={email} onChange={(event) => setEmail(event.target.value)} placeholder="Email" />
+          <button type="button" onClick={submitContact}>
+            Save Contact
+          </button>
+        </div>
+      ) : null}
+      {contacts.length ? (
+        <ul className="compact-profile-list">
+          {contacts.map((contact) => (
+            <li key={contact.id}>
+              <strong>{contact.name}</strong>
+              <span>{[contact.role, contact.phone, contact.email].filter(Boolean).join(" · ") || "No details yet"}</span>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="empty">No contacts saved.</p>
+      )}
+    </Panel>
   );
 }
 
 function CommandTimeline({
   company,
-  companyTasks,
-  timeline,
+  timelineRows,
   noteResult,
   onSmartNotesChange,
   onAddNote
 }: {
   company: Company;
-  companyTasks: Task[];
-  timeline: typeof seedTimeline;
+  timelineRows: ProfileTimelineRow[];
   noteResult: { tasks: Array<{ title: string; owner: string }> } | null;
   onSmartNotesChange: (smartNotes: string) => void;
   onAddNote: () => void;
 }) {
-  const timelineEntries = timeline
-    .filter((entry) => entry.companyId === company.id)
-    .map((entry) => ({
-      id: entry.id,
-      title: entry.at,
-      detail: entry.body,
-      createdAt: entry.createdAt,
-      type: "timeline"
-    }));
-  const taskEntries = [...companyTasks]
-    .sort((firstTask, secondTask) => secondTask.createdAt.localeCompare(firstTask.createdAt))
-    .map((task) => ({
-      id: task.id,
-      title: task.title,
-      detail: `${taskStatusLabel(task.status)} · ${task.due} · Owner: ${task.owner}`,
-      createdAt: task.createdAt,
-      type: "task"
-    }));
-  const timelineRows = [...timelineEntries, ...taskEntries].sort(
-    (firstEntry, secondEntry) => secondEntry.createdAt.localeCompare(firstEntry.createdAt)
-  );
-
   return (
-    <section className="command-timeline" aria-label="ACTIVITY NOTES">
+    <section className="command-timeline" aria-label="Call Notes">
       <div className="command-center">
         <div className="command-center-header">
-          <h3>ACTIVITY NOTES</h3>
+          <h3>Call Notes</h3>
           <p>Type notes naturally. Blue Bomber OS will detect tasks and activities automatically.</p>
         </div>
 
@@ -1544,19 +1872,18 @@ Requested email only`}
         {noteResult ? <NoteSavedMessage tasks={noteResult.tasks} /> : null}
       </div>
 
-      <div className="current-opportunity">
-        <span>Current Opportunity</span>
-        <strong>{company.currentOpportunity}</strong>
-      </div>
-
       <div className="timeline-stream">
         <h3>Timeline</h3>
-        {timelineRows.map((entry) => (
-          <div className={entry.type === "task" ? "timeline-item task-event" : "timeline-item"} key={entry.id}>
-            <strong>{entry.title}</strong>
-            <span>{entry.detail}</span>
-          </div>
-        ))}
+        {timelineRows.length ? (
+          timelineRows.map((entry) => (
+            <div className={entry.type === "task" ? "timeline-item task-event" : "timeline-item"} key={entry.id}>
+              <strong>{entry.title}</strong>
+              <span>{entry.detail}</span>
+            </div>
+          ))
+        ) : (
+          <p className="empty">No timeline yet.</p>
+        )}
       </div>
     </section>
   );
@@ -1938,6 +2265,7 @@ function TaskDashboard({
   onReassignTask,
   onSnoozeTask,
   selectedTaskId,
+  showAdvanced,
   taskFilter,
   taskItems
 }: {
@@ -1949,6 +2277,7 @@ function TaskDashboard({
   onReassignTask: (task: Task) => void;
   onSnoozeTask: (task: Task) => void;
   selectedTaskId: string | null;
+  showAdvanced: boolean;
   taskFilter: TaskFilter;
   taskItems: Task[];
 }) {
@@ -1956,13 +2285,22 @@ function TaskDashboard({
     return <p className="empty">No tasks here.</p>;
   }
 
+  const recentTasks = [...taskItems]
+    .sort((firstTask, secondTask) => secondTask.createdAt.localeCompare(firstTask.createdAt))
+    .slice(0, 6);
+  const todaySections = [
+    { title: "Due Today", tasks: taskItems.filter((task) => isTaskDueToday(task) && !isTaskOverdue(task)) },
+    { title: "Overdue", tasks: taskItems.filter((task) => isTaskOverdue(task)) },
+    { title: "Recently Updated", tasks: recentTasks }
+  ];
   const sections =
     taskFilter === "today"
-      ? [
-          { title: "Overdue", tasks: taskItems.filter((task) => isTaskOverdue(task)) },
-          { title: "Due Today", tasks: taskItems.filter((task) => isTaskDueToday(task) && !isTaskOverdue(task)) },
-          { title: "Upcoming", tasks: taskItems.filter((task) => !isTaskDueToday(task) && !isTaskOverdue(task)) }
-        ]
+      ? showAdvanced
+        ? [
+            ...todaySections,
+            { title: "Upcoming", tasks: taskItems.filter((task) => !isTaskDueToday(task) && !isTaskOverdue(task)) }
+          ]
+        : todaySections
       : [{ title: taskFilters.find((filter) => filter.id === taskFilter)?.label ?? "Tasks", tasks: taskItems }];
 
   return (
@@ -2022,10 +2360,11 @@ function TaskDashboardSection({
           <ul className="task-list">
             {ownerTasks.map((task) => {
               const displayStatus = getTaskDisplayStatus(task);
+              const isOpen = selectedTaskId === task.id;
 
               return (
                 <li key={task.id}>
-                  <article className={selectedTaskId === task.id ? "task-card selected" : "task-card"}>
+                  <article className={isOpen ? "task-card selected" : "task-card"}>
                     <span className={task.priority === "high" ? "task-dot high" : "task-dot"} />
                     <div className="task-card-main">
                       <strong>{task.title}</strong>
@@ -2055,20 +2394,24 @@ function TaskDashboardSection({
                     </div>
                     <div className="task-card-actions">
                       <button className="task-detail-button" type="button" onClick={() => onOpenTaskDetail(task)}>
-                        {selectedTaskId === task.id ? "Hide Details" : "Expand"}
+                        {isOpen ? "Close" : "Open"}
                       </button>
-                      <button type="button" onClick={() => onCompleteTask(task)}>
-                        Complete
-                      </button>
-                      <button type="button" onClick={() => onSnoozeTask(task)}>
-                        Snooze
-                      </button>
-                      <button type="button" onClick={() => onReassignTask(task)}>
-                        Reassign
-                      </button>
-                      <button type="button" onClick={() => onEditTask(task)}>
-                        Edit
-                      </button>
+                      {isOpen ? (
+                        <>
+                          <button type="button" onClick={() => onCompleteTask(task)}>
+                            Complete
+                          </button>
+                          <button type="button" onClick={() => onSnoozeTask(task)}>
+                            Snooze
+                          </button>
+                          <button type="button" onClick={() => onReassignTask(task)}>
+                            Reassign
+                          </button>
+                          <button type="button" onClick={() => onEditTask(task)}>
+                            Edit
+                          </button>
+                        </>
+                      ) : null}
                     </div>
                   </article>
                 </li>
@@ -2102,7 +2445,7 @@ function getPageTitle(view: AppView, company: Company | null, carrier: Carrier |
     return "Carriers";
   }
 
-  return "Tasks";
+  return "Today's Tasks";
 }
 
 function getTaskEntityId(task: Task) {
