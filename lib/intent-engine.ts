@@ -62,6 +62,12 @@ const taskIntentRules: TaskIntentRule[] = [
     due: "Next Monday"
   },
   {
+    match: "call back",
+    taskName: "Call Contact",
+    owner: "sales",
+    priority: "normal"
+  },
+  {
     match: "need better contacts",
     taskName: "Find Better Contact",
     owner: "operations",
@@ -104,8 +110,8 @@ const taskIntentRules: TaskIntentRule[] = [
     priority: "normal"
   },
   {
-    match: "call back",
-    taskName: "Call Contact",
+    match: "send rates",
+    taskName: "Send Rates",
     owner: "sales",
     priority: "normal"
   },
@@ -133,6 +139,12 @@ const taskIntentRules: TaskIntentRule[] = [
     owner: "sales",
     priority: "normal",
     due: "Next Week"
+  },
+  {
+    match: "find email",
+    taskName: "Find Email",
+    owner: "operations",
+    priority: "normal"
   },
   {
     match: "need email",
@@ -195,7 +207,19 @@ const taskIntentRules: TaskIntentRule[] = [
     priority: "normal"
   },
   {
+    match: "get coi",
+    taskName: "Get Updated COI",
+    owner: "operations",
+    priority: "high"
+  },
+  {
     match: "need coi",
+    taskName: "Get Updated COI",
+    owner: "operations",
+    priority: "high"
+  },
+  {
+    match: "coi",
     taskName: "Get Updated COI",
     owner: "operations",
     priority: "high"
@@ -204,6 +228,18 @@ const taskIntentRules: TaskIntentRule[] = [
     match: "need w9",
     taskName: "Get W9",
     owner: "operations",
+    priority: "normal"
+  },
+  {
+    match: "w9",
+    taskName: "Get W9",
+    owner: "operations",
+    priority: "normal"
+  },
+  {
+    match: "check with louie",
+    taskName: "Check With Louie",
+    owner: "sales",
     priority: "normal"
   },
   {
@@ -432,6 +468,12 @@ export function applyIntent(
 }
 
 function getActionName(taskName: string, note: string, detectedDue = "") {
+  if (taskName === "Send Rates") {
+    const contact = extractProbableContacts(note)[0];
+
+    return contact?.name ? `Send Rates to ${contact.name}` : taskName;
+  }
+
   if (taskName !== "Call Contact" && taskName !== "Call Back") {
     return taskName;
   }
@@ -451,14 +493,14 @@ function getActionName(taskName: string, note: string, detectedDue = "") {
 
 function splitIntentSentences(note: string) {
   return note
-    .toLowerCase()
     .split(/[\n.!?]+/)
     .map((sentence) => sentence.trim())
     .filter(Boolean);
 }
 
 function findTaskRulesForSentence(sentence: string): MatchedTaskRule[] {
-  const matchedRules = taskIntentRules.filter((rule) => sentence.includes(rule.match));
+  const normalizedSentence = sentence.toLowerCase();
+  const matchedRules = taskIntentRules.filter((rule) => normalizedSentence.includes(rule.match));
 
   return matchedRules
     .filter(
@@ -584,6 +626,7 @@ function extractProbableContacts(note: string) {
     .filter(Boolean);
   const triggerPatterns = [
     /\b(?:[Cc]all|[Ff]ollow up with)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)(?:\s+in\s+([A-Z][A-Za-z &/-]+))?/g,
+    /\b(?:[Ss]end rates to|[Ss]end quote to|[Ee]mail quote to|[Nn]eed pricing for|[Ff]ollow up with|[Cc]heck with)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)(?:\s+in\s+([A-Z][A-Za-z &/-]+))?/g,
     /\b(?:[Ss]poke with|[Tt]alked to|[Rr]eceived email from|[Ee]mail from)\s+([A-Z][a-z]+(?:\s+(?:and|&)\s+[A-Z][a-z]+)?(?:\s+[A-Z][a-z]+)?)(?:\s+in\s+([A-Z][A-Za-z &/-]+))?/g,
     /^([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)(?:\s+in\s+([A-Z][A-Za-z &/-]+))?\s+(?:said|says|told|emailed|called|asked|requested)\b/g
   ];
@@ -650,7 +693,12 @@ function normalizeContactName(value: string) {
 }
 
 function namesMatch(firstName: string, secondName: string) {
-  return normalizeContactName(firstName) === normalizeContactName(secondName);
+  const firstNormalized = normalizeContactName(firstName);
+  const secondNormalized = normalizeContactName(secondName);
+  const firstGiven = firstNormalized.split(/\s+/)[0] ?? "";
+  const secondGiven = secondNormalized.split(/\s+/)[0] ?? "";
+
+  return firstNormalized === secondNormalized || Boolean(firstGiven && firstGiven === secondGiven);
 }
 
 export function applyCarrierIntent(note: string, carrier: Carrier, createdBy = "Blue Bomber OS", now = new Date()): CarrierIntentResult {

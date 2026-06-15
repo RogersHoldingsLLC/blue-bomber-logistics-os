@@ -1399,8 +1399,176 @@ button.company-preview:hover {
 .profile-section-buttons {
   display: grid;
   gap: 8px;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 1fr);
   margin-bottom: 14px;
+}
+
+.import-preview {
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  display: grid;
+  gap: 12px;
+  margin-bottom: 14px;
+  padding: 14px;
+}
+
+.import-preview-header {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+}
+
+.import-preview-header h3 {
+  font-size: 16px;
+  margin: 0;
+}
+
+.import-preview-header span,
+.import-preview-grid span,
+.import-mapping-grid span,
+.import-row-preview span {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.import-preview-grid,
+.import-mapping-grid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.import-preview-grid > div,
+.import-mapping-grid > div {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  display: grid;
+  gap: 6px;
+  padding: 10px;
+}
+
+.import-mapping-grid ul,
+.import-row-preview {
+  display: grid;
+  gap: 6px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.import-mapping-grid li {
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+}
+
+.import-mapping-grid b {
+  font-size: 13px;
+  text-align: right;
+}
+
+.import-row-preview li {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  display: grid;
+  gap: 3px;
+  padding: 9px;
+}
+
+.import-row-preview li.skipped {
+  border-color: var(--attention);
+}
+
+.modal-backdrop {
+  align-items: center;
+  background: rgba(10, 16, 28, 0.42);
+  display: flex;
+  inset: 0;
+  justify-content: center;
+  padding: 24px;
+  position: fixed;
+  z-index: 50;
+}
+
+.smart-note-modal {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+  display: grid;
+  gap: 14px;
+  max-height: min(720px, calc(100vh - 48px));
+  max-width: 620px;
+  overflow: auto;
+  padding: 18px;
+  width: min(100%, 620px);
+}
+
+.smart-note-modal-header h3 {
+  font-size: 18px;
+  margin: 0 0 4px;
+}
+
+.smart-note-modal-header p,
+.smart-note-review-section p,
+.smart-note-source p {
+  color: var(--muted);
+  font-size: 13px;
+  margin: 0;
+}
+
+.smart-note-review-section {
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+}
+
+.smart-note-review-section ul {
+  display: grid;
+  gap: 8px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.smart-note-review-section label {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.smart-note-source {
+  background: var(--surface-muted);
+  border-radius: 7px;
+  display: grid;
+  gap: 5px;
+  padding: 10px;
+}
+
+.smart-note-modal-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.smart-note-modal-actions button {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 800;
+  min-height: 34px;
+  padding: 0 12px;
 }
 
 .manual-entry {

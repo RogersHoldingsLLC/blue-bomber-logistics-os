@@ -11,7 +11,7 @@ import {
   tasks as seedTasks,
   timeline as seedTimeline
 } from "@/lib/data";
-import { applyCarrierIntent, applyIntent } from "@/lib/intent-engine";
+import { applyCarrierIntent, applyIntent, type IntentResult } from "@/lib/intent-engine";
 import { loadStoredState, saveStoredState } from "@/lib/storage";
 import {
   canUseSupabase,
@@ -33,7 +33,7 @@ type AppUser = {
   name: string;
   role: AppRole;
 };
-type ProfileTab = "tasks" | "files";
+type ProfileTab = "tasks";
 type QuickCreateType = "prospect" | "customer" | "carrier";
 type ManualContactInput = {
   name: string;
@@ -63,6 +63,14 @@ type NoteSaveResult = {
   contacts: string[];
   tasks: Array<{ title: string; owner: string }>;
   systemUpdates: string[];
+};
+type SmartNoteReview = {
+  companyId: string;
+  note: string;
+  result: IntentResult;
+  newContacts: Contact[];
+  selectedContactIds: string[];
+  selectedTaskIds: string[];
 };
 type ProfileTimelineRow = {
   id: string;
@@ -100,6 +108,34 @@ type ProspectImportRow = {
   contactEmail: string;
   notes: string;
 };
+type ImportFieldKey =
+  | "companyName"
+  | "status"
+  | "address"
+  | "city"
+  | "state"
+  | "zip"
+  | "phone"
+  | "website"
+  | "notes"
+  | "contactName"
+  | "contactRole"
+  | "contactPhone"
+  | "contactEmail";
+type ImportPreviewRow = {
+  rowNumber: number;
+  row: ProspectImportRow;
+  action: "ready" | "skip";
+  skippedReason: string;
+};
+type ImportPreview = {
+  fileName: string;
+  detectedColumns: string[];
+  normalizedColumns: string[];
+  fieldMapping: Record<ImportFieldKey, string>;
+  unmappedColumns: string[];
+  rows: ImportPreviewRow[];
+};
 
 const THEME_STORAGE_KEY = "blue-bomber-theme";
 
@@ -111,8 +147,7 @@ const taskFilters: Array<{ id: TaskFilter; label: string }> = [
 ];
 
 const profileTabs: Array<{ id: ProfileTab; label: string }> = [
-  { id: "tasks", label: "Tasks" },
-  { id: "files", label: "Files" }
+  { id: "tasks", label: "Tasks" }
 ];
 
 function mapSupabaseUser(user: User): AppUser {
@@ -309,10 +344,12 @@ export default function Home() {
   const [themeMode, setThemeMode] = useState<ThemeMode>("light");
   const [hasHydratedTheme, setHasHydratedTheme] = useState(false);
   const [importResult, setImportResult] = useState<{ imported: number; skipped: number } | null>(null);
+  const [importPreview, setImportPreview] = useState<ImportPreview | null>(null);
   const [isImporting, setIsImporting] = useState(false);
   const [selectedBulkProspectIds, setSelectedBulkProspectIds] = useState<string[]>([]);
   const importInputRef = useRef<HTMLInputElement | null>(null);
   const [noteResult, setNoteResult] = useState<NoteSaveResult | null>(null);
+  const [smartNoteReview, setSmartNoteReview] = useState<SmartNoteReview | null>(null);
   const [fileCabinetError, setFileCabinetError] = useState("");
   const [showManualActionForm, setShowManualActionForm] = useState(false);
   const [manualActionTitle, setManualActionTitle] = useState("");
@@ -1272,7 +1309,40 @@ export default function Home() {
     setIsImporting(true);
 
     try {
-      const rows = await readProspectImportRows(file);
+      const parsedImport = await readProspectImportRows(file);
+      const preview = buildImportPreview(file.name, parsedImport, companies);
+
+      console.log("[Blue Bomber Import] row import result:", preview.rows.map((row) => ({
+        rowNumber: row.rowNumber,
+        company: row.row.companyName,
+        action: row.action,
+        skippedReason: row.skippedReason
+      })));
+      setImportPreview(preview);
+      setImportResult(null);
+    } catch (error) {
+      console.error("[Blue Bomber Import] Prospect import preview failed:", error);
+      window.alert(error instanceof Error ? error.message : "Prospect import failed.");
+    } finally {
+      setIsImporting(false);
+
+      if (importInputRef.current) {
+        importInputRef.current.value = "";
+      }
+    }
+  }
+
+  async function confirmImportPreview() {
+    if (!importPreview) {
+      return;
+    }
+
+    setIsImporting(true);
+
+    try {
+      const rows = importPreview.rows
+        .filter((row) => row.action === "ready")
+        .map((row) => row.row);
       const existingByName = new Map(companies.map((company) => [normalizeCompanyName(company.name), company]));
       const contactKeys = new Set(
         contacts.map((contact) => `${contact.companyId}:${normalizeCompanyName(contact.name)}:${contact.email.toLowerCase()}`)
@@ -1374,16 +1444,112 @@ export default function Home() {
       }
 
       setImportResult({ imported: importedCompanies.length, skipped });
+      setImportPreview(null);
     } catch (error) {
       console.error("[Blue Bomber Import] Prospect import failed:", error);
       window.alert(error instanceof Error ? error.message : "Prospect import failed.");
     } finally {
       setIsImporting(false);
-
-      if (importInputRef.current) {
-        importInputRef.current.value = "";
-      }
     }
+  }
+
+  function cancelImportPreview() {
+    setImportPreview(null);
+  }
+
+  function toggleSmartNoteContact(contactId: string) {
+    setSmartNoteReview((review) =>
+      review
+        ? {
+            ...review,
+            selectedContactIds: review.selectedContactIds.includes(contactId)
+              ? review.selectedContactIds.filter((id) => id !== contactId)
+              : [...review.selectedContactIds, contactId]
+          }
+        : review
+    );
+  }
+
+  function toggleSmartNoteTask(taskId: string) {
+    setSmartNoteReview((review) =>
+      review
+        ? {
+            ...review,
+            selectedTaskIds: review.selectedTaskIds.includes(taskId)
+              ? review.selectedTaskIds.filter((id) => id !== taskId)
+              : [...review.selectedTaskIds, taskId]
+          }
+        : review
+    );
+  }
+
+  function cancelSmartNoteReview() {
+    setSmartNoteReview(null);
+  }
+
+  function confirmSmartNoteReview() {
+    if (!smartNoteReview) {
+      return;
+    }
+
+    const latestCompany =
+      companies.find((company) => company.id === smartNoteReview.companyId) ?? smartNoteReview.result.company;
+    const selectedContactIds = new Set(smartNoteReview.selectedContactIds);
+    const selectedTaskIds = new Set(smartNoteReview.selectedTaskIds);
+    const newContactIds = new Set(smartNoteReview.newContacts.map((contact) => contact.id));
+    const selectedNewContacts = smartNoteReview.newContacts.filter((contact) => selectedContactIds.has(contact.id));
+    const selectedContactNames = new Set(selectedNewContacts.map((contact) => contact.name));
+    const nextContacts = smartNoteReview.result.contacts.filter(
+      (contact) => !newContactIds.has(contact.id) || selectedContactIds.has(contact.id)
+    );
+    const selectedTasks = smartNoteReview.result.tasks.filter((task) => selectedTaskIds.has(task.id));
+    const nextTasks = selectedTasks.length ? [...selectedTasks, ...tasks] : tasks;
+    const taskCreatedEvents = selectedTasks
+      .map((task) =>
+        createTaskTimelineEvent(task, "Action Created", `${task.title} created for ${task.owner} by ${task.createdBy}.`)
+      )
+      .filter((entry): entry is TimelineEntry => Boolean(entry));
+    const contactTimelineEntries = smartNoteReview.result.contactTimelineEntries.filter((entry) =>
+      selectedContactNames.has(entry.body)
+    );
+    const nextTimeline = [
+      ...taskCreatedEvents,
+      ...contactTimelineEntries,
+      smartNoteReview.result.timelineEntry,
+      ...timeline
+    ];
+    const nextCompanies = companies.map((company) =>
+      company.id === latestCompany.id
+        ? {
+            ...smartNoteReview.result.company,
+            smartNotes: "",
+            lastContact: selectedNewContacts.length
+              ? smartNoteReview.result.company.lastContact
+              : latestCompany.lastContact
+          }
+        : company
+    );
+
+    setCompanies(nextCompanies);
+    setContacts(nextContacts);
+    setTasks(nextTasks);
+    setTimeline(nextTimeline);
+    persistState({
+      companies: nextCompanies,
+      contacts: nextContacts,
+      tasks: nextTasks,
+      timeline: nextTimeline
+    }, selectedTasks.length ? "confirming note and generating actions" : "confirming note");
+    setNoteResult({
+      contacts: selectedNewContacts.map((contact) => contact.name),
+      tasks: selectedTasks.map((task) => ({ title: task.title, owner: task.owner })),
+      systemUpdates: [
+        ...selectedNewContacts.map((contact) => `Contact Added: ${contact.name}`),
+        "Timeline Updated"
+      ]
+    });
+    setSmartNoteReview(null);
+    window.setTimeout(() => setNoteResult(null), 5000);
   }
 
   function updateSelectedProspectStatus(status: CompanyStatus) {
@@ -1760,6 +1926,7 @@ export default function Home() {
         <CompanyListPage
           companies={prospectCompanies}
           importInputRef={importInputRef}
+          importPreview={importPreview}
           importResult={importResult}
           isImporting={isImporting}
           canManageList={isAdmin}
@@ -1768,6 +1935,8 @@ export default function Home() {
           onArchiveSelected={archiveSelectedProspects}
           onBulkStatusChange={updateSelectedProspectStatus}
           onDeleteSelected={deleteSelectedProspects}
+          onCancelImportPreview={cancelImportPreview}
+          onConfirmImportPreview={confirmImportPreview}
           onImportFile={importProspects}
           onSelect={selectCompany}
           onToggleBulkProspect={toggleBulkProspect}
@@ -1778,11 +1947,14 @@ export default function Home() {
         <CompanyListPage
           companies={customerCompanies}
           canManageList={false}
+          importPreview={null}
           selectedBulkProspectIds={[]}
           title="Customer List"
           onArchiveSelected={() => undefined}
           onBulkStatusChange={() => undefined}
           onDeleteSelected={() => undefined}
+          onCancelImportPreview={() => undefined}
+          onConfirmImportPreview={() => undefined}
           onImportFile={importProspects}
           onSelect={selectCompany}
           onToggleBulkProspect={() => undefined}
@@ -1828,46 +2000,18 @@ export default function Home() {
               }
 
               setSelectedTaskId(null);
-              const result = applyIntent(latestCompany.smartNotes, latestCompany, contacts, currentUserName);
-              const nextCompanies = companies.map((company) =>
-                company.id === latestCompany.id ? { ...result.company, smartNotes: "" } : company
-              );
-              const nextTasks = result.tasks.length ? [...result.tasks, ...tasks] : tasks;
-              const taskCreatedEvents = result.tasks
-                .map((task) =>
-                  createTaskTimelineEvent(task, "Action Created", `${task.title} created for ${task.owner} by ${task.createdBy}.`)
-                )
-                .filter((entry): entry is TimelineEntry => Boolean(entry));
-              const nextTimeline = [
-                ...taskCreatedEvents,
-                ...result.contactTimelineEntries,
-                result.timelineEntry,
-                ...timeline
-              ];
+              const result = applyIntent(note, latestCompany, contacts, currentUserName);
+              const existingContactIds = new Set(contacts.map((contact) => contact.id));
+              const newContacts = result.contacts.filter((contact) => !existingContactIds.has(contact.id));
 
-              setCompanies(nextCompanies);
-              setContacts(result.contacts);
-
-              if (result.tasks.length) {
-                setTasks(nextTasks);
-              }
-
-              setTimeline(nextTimeline);
-              persistState({
-                companies: nextCompanies,
-                contacts: result.contacts,
-                tasks: nextTasks,
-                timeline: nextTimeline
-              }, result.tasks.length ? "adding note and generating task" : "adding note");
-              setNoteResult({
-                contacts: result.contactsAdded,
-                tasks: result.tasks.map((task) => ({ title: task.title, owner: task.owner })),
-                systemUpdates: [
-                  "Timeline updated",
-                  ...result.contactsAdded.map((contactName) => `Contact Added: ${contactName}`)
-                ]
+              setSmartNoteReview({
+                companyId: latestCompany.id,
+                note,
+                result,
+                newContacts,
+                selectedContactIds: newContacts.map((contact) => contact.id),
+                selectedTaskIds: result.tasks.map((task) => task.id)
               });
-              window.setTimeout(() => setNoteResult(null), 5000);
             }}
             tasks={selectedCompanyTasks}
             timeline={timeline}
@@ -1915,6 +2059,16 @@ export default function Home() {
             onUploadFile={(file) => void uploadAccountFile(selectedCarrier.id, "carrier", file)}
           />
         </>
+      ) : null}
+
+      {smartNoteReview ? (
+        <SmartNoteReviewModal
+          review={smartNoteReview}
+          onCancel={cancelSmartNoteReview}
+          onConfirm={confirmSmartNoteReview}
+          onToggleContact={toggleSmartNoteContact}
+          onToggleTask={toggleSmartNoteTask}
+        />
       ) : null}
     </main>
   );
@@ -1997,6 +2151,7 @@ function CompanyListPage({
   canManageList,
   companies,
   importInputRef,
+  importPreview,
   importResult,
   isImporting = false,
   selectedBulkProspectIds,
@@ -2004,6 +2159,8 @@ function CompanyListPage({
   onArchiveSelected,
   onBulkStatusChange,
   onDeleteSelected,
+  onCancelImportPreview,
+  onConfirmImportPreview,
   onImportFile,
   onSelect,
   onToggleBulkProspect
@@ -2011,6 +2168,7 @@ function CompanyListPage({
   canManageList: boolean;
   companies: Company[];
   importInputRef?: React.RefObject<HTMLInputElement>;
+  importPreview: ImportPreview | null;
   importResult?: { imported: number; skipped: number } | null;
   isImporting?: boolean;
   selectedBulkProspectIds: string[];
@@ -2018,6 +2176,8 @@ function CompanyListPage({
   onArchiveSelected: () => void;
   onBulkStatusChange: (status: CompanyStatus) => void;
   onDeleteSelected: () => void;
+  onCancelImportPreview: () => void;
+  onConfirmImportPreview: () => void;
   onImportFile: (file: File) => void;
   onSelect: (companyId: string) => void;
   onToggleBulkProspect: (companyId: string) => void;
@@ -2066,6 +2226,15 @@ function CompanyListPage({
           </div>
         ) : null}
       </div>
+
+      {isProspectList && canManageList && importPreview ? (
+        <ImportPreviewPanel
+          importPreview={importPreview}
+          isImporting={isImporting}
+          onCancel={onCancelImportPreview}
+          onConfirm={onConfirmImportPreview}
+        />
+      ) : null}
 
       {isProspectList && canManageList && showListManagement ? (
         <div className="bulk-control list-bulk-control" aria-label="Bulk prospect actions">
@@ -2125,6 +2294,204 @@ function CompanyListPage({
         ))}
       </ul>
     </section>
+  );
+}
+
+function ImportPreviewPanel({
+  importPreview,
+  isImporting,
+  onCancel,
+  onConfirm
+}: {
+  importPreview: ImportPreview;
+  isImporting: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  const readyRows = importPreview.rows.filter((row) => row.action === "ready");
+  const skippedRows = importPreview.rows.filter((row) => row.action === "skip");
+  const companyFields: ImportFieldKey[] = [
+    "companyName",
+    "status",
+    "address",
+    "city",
+    "state",
+    "zip",
+    "phone",
+    "website",
+    "notes"
+  ];
+  const contactFields: ImportFieldKey[] = ["contactName", "contactRole", "contactPhone", "contactEmail"];
+
+  return (
+    <section className="import-preview" aria-label="Import Preview">
+      <div className="import-preview-header">
+        <div>
+          <h3>Import Preview</h3>
+          <span>{importPreview.fileName}</span>
+        </div>
+        <div className="profile-actions">
+          <button type="button" onClick={onCancel} disabled={isImporting}>
+            Cancel
+          </button>
+          <button type="button" onClick={onConfirm} disabled={isImporting || !readyRows.length}>
+            {isImporting ? "Importing" : `Import ${readyRows.length}`}
+          </button>
+        </div>
+      </div>
+
+      <div className="import-preview-grid">
+        <div>
+          <strong>Detected Columns</strong>
+          <span>{importPreview.detectedColumns.join(", ") || "None"}</span>
+        </div>
+        <div>
+          <strong>Unmapped Columns</strong>
+          <span>{importPreview.unmappedColumns.join(", ") || "None"}</span>
+        </div>
+      </div>
+
+      <div className="import-mapping-grid">
+        <div>
+          <strong>Mapped Company Fields</strong>
+          <ul>
+            {companyFields.map((field) => (
+              <li key={field}>
+                <span>{formatImportField(field)}</span>
+                <b>{importPreview.fieldMapping[field] || "Not mapped"}</b>
+              </li>
+            ))}
+          </ul>
+        </div>
+        <div>
+          <strong>Mapped Contact Fields</strong>
+          <ul>
+            {contactFields.map((field) => (
+              <li key={field}>
+                <span>{formatImportField(field)}</span>
+                <b>{importPreview.fieldMapping[field] || "Not mapped"}</b>
+              </li>
+            ))}
+          </ul>
+        </div>
+      </div>
+
+      <div className="import-preview-grid">
+        <div>
+          <strong>Rows Ready To Import</strong>
+          <span>{readyRows.length}</span>
+        </div>
+        <div>
+          <strong>Rows Skipped</strong>
+          <span>{skippedRows.length}</span>
+        </div>
+      </div>
+
+      {importPreview.rows.length ? (
+        <ul className="import-row-preview">
+          {importPreview.rows.slice(0, 8).map((row) => (
+            <li className={row.action === "skip" ? "skipped" : ""} key={row.rowNumber}>
+              <strong>Row {row.rowNumber}: {row.row.companyName || "No company"}</strong>
+              <span>
+                {row.action === "ready"
+                  ? [row.row.address, row.row.city, row.row.state, row.row.contactName, row.row.contactEmail]
+                      .filter(Boolean)
+                      .join(" · ") || "Ready"
+                  : row.skippedReason}
+              </span>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </section>
+  );
+}
+
+function SmartNoteReviewModal({
+  review,
+  onCancel,
+  onConfirm,
+  onToggleContact,
+  onToggleTask
+}: {
+  review: SmartNoteReview;
+  onCancel: () => void;
+  onConfirm: () => void;
+  onToggleContact: (contactId: string) => void;
+  onToggleTask: (taskId: string) => void;
+}) {
+  return (
+    <div className="modal-backdrop" role="presentation">
+      <section className="smart-note-modal" aria-label="Smart Notes Found" role="dialog" aria-modal="true">
+        <div className="smart-note-modal-header">
+          <h3>Smart Notes Found</h3>
+          <p>Confirm what Blue Bomber OS should save.</p>
+        </div>
+
+        <div className="smart-note-review-section">
+          <strong>Contacts:</strong>
+          {review.newContacts.length ? (
+            <ul>
+              {review.newContacts.map((contact) => (
+                <li key={contact.id}>
+                  <label>
+                    <input
+                      checked={review.selectedContactIds.includes(contact.id)}
+                      type="checkbox"
+                      onChange={() => onToggleContact(contact.id)}
+                    />
+                    <span>
+                      {contact.name}
+                      {contact.role ? ` - ${contact.role}` : ""}
+                    </span>
+                  </label>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p>No new contacts found.</p>
+          )}
+        </div>
+
+        <div className="smart-note-review-section">
+          <strong>Suggested Actions:</strong>
+          {review.result.tasks.length ? (
+            <ul>
+              {review.result.tasks.map((task) => (
+                <li key={task.id}>
+                  <label>
+                    <input
+                      checked={review.selectedTaskIds.includes(task.id)}
+                      type="checkbox"
+                      onChange={() => onToggleTask(task.id)}
+                    />
+                    <span>
+                      {task.title} - {task.due || "No due date"} - {task.owner}
+                    </span>
+                  </label>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p>No suggested actions.</p>
+          )}
+        </div>
+
+        <div className="smart-note-source">
+          <strong>Source Note</strong>
+          <p>{review.note}</p>
+        </div>
+
+        <div className="smart-note-modal-actions">
+          <button type="button" onClick={onCancel}>
+            Cancel
+          </button>
+          <button className="primary-action" type="button" onClick={onConfirm}>
+            Confirm Selected
+          </button>
+        </div>
+      </section>
+    </div>
   );
 }
 
@@ -2202,6 +2569,12 @@ function CarrierProfile({
           <textarea
             value={note}
             onChange={(event) => onNoteChange(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" && !event.shiftKey) {
+                event.preventDefault();
+                onAddNote();
+              }
+            }}
             placeholder={`Need COI
 
 Need W9
@@ -2457,19 +2830,6 @@ function CompanyProfile({
 
       {expandedSection === "tasks" ? (
         <ProfileTasksSection tasks={openTasks} onAddManualTask={onAddManualTask} />
-      ) : null}
-
-      {expandedSection === "files" ? (
-        <Panel title="Files">
-          <FileCabinet files={files} fileCabinetError={fileCabinetError} onUploadFile={onUploadFile} />
-          <div className="profile-actions">
-            {canManageAccount ? (
-              <button className="delete-button" type="button" onClick={onDeleteCompany}>
-                Delete Account
-              </button>
-            ) : null}
-          </div>
-        </Panel>
       ) : null}
 
       <CommandTimeline
@@ -2751,6 +3111,12 @@ function CommandTimeline({
         <textarea
           value={company.smartNotes}
           onChange={(event) => onSmartNotesChange(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" && !event.shiftKey) {
+              event.preventDefault();
+              onAddNote();
+            }
+          }}
           placeholder={"What's goin' on Jerry?"}
         />
         <div className="note-actions">
@@ -2996,7 +3362,7 @@ async function readProspectImportRows(file: File) {
     const firstSheetName = workbook.SheetNames[0];
 
     if (!firstSheetName) {
-      return [];
+      return parseProspectRows([]);
     }
 
     return parseProspectRows(
@@ -3009,31 +3375,46 @@ async function readProspectImportRows(file: File) {
   throw new Error("Import requires a .csv or .xlsx file.");
 }
 
-function parseProspectRows(rows: Array<Record<string, unknown>>): ProspectImportRow[] {
-  return rows
-    .map((row) => ({
-      companyName: getImportValue(row, "Company Name"),
-      status: parseImportStatus(getImportValue(row, "Status")),
-      salesLead: getImportValue(row, "Sales Lead"),
-      operationsLead: getImportValue(row, "Operations Lead"),
-      address: getImportValue(row, "Address"),
-      city: getImportValue(row, "City"),
-      state: getImportValue(row, "State"),
-      zip: getImportValue(row, "Zip") || getImportValue(row, "ZIP") || getImportValue(row, "Postal Code"),
-      phone: getImportValue(row, "Phone"),
-      email: getImportValue(row, "Email"),
-      website: getImportValue(row, "Website"),
-      contactName: getImportValue(row, "Contact Name"),
-      contactRole:
-        getImportValue(row, "Contact Title/Role") ||
-        getImportValue(row, "Contact Title") ||
-        getImportValue(row, "Contact Role") ||
-        getImportValue(row, "Role"),
-      contactPhone: getImportValue(row, "Contact Phone") || getImportValue(row, "Phone"),
-      contactEmail: getImportValue(row, "Contact Email") || getImportValue(row, "Email"),
-      notes: getImportValue(row, "Notes")
+function parseProspectRows(rows: Array<Record<string, unknown>>): {
+  headers: string[];
+  normalizedHeaders: string[];
+  fieldMapping: Record<ImportFieldKey, string>;
+  rows: ProspectImportRow[];
+  unmappedColumns: string[];
+} {
+  const headers = getImportHeaders(rows);
+  const fieldMapping = mapImportHeaders(headers);
+  const mappedHeaders = new Set(Object.values(fieldMapping).filter(Boolean));
+  const unmappedColumns = headers.filter((header) => !mappedHeaders.has(header));
+
+  console.log("[Blue Bomber Import] raw headers:", headers);
+  console.log("[Blue Bomber Import] normalized headers:", headers.map(normalizeImportHeader));
+  console.log("[Blue Bomber Import] field mapping result:", fieldMapping);
+
+  return {
+    headers,
+    normalizedHeaders: headers.map(normalizeImportHeader),
+    fieldMapping,
+    unmappedColumns,
+    rows: rows.map((row) => ({
+      companyName: getImportMappedValue(row, fieldMapping.companyName),
+      status: parseImportStatus(getImportMappedValue(row, fieldMapping.status)),
+      salesLead: getImportValueByAliases(row, ["sales lead", "sales owner"]) || "Louie",
+      operationsLead: getImportValueByAliases(row, ["operations lead", "operations owner"]) || "Brian",
+      address: getImportMappedValue(row, fieldMapping.address),
+      city: getImportMappedValue(row, fieldMapping.city),
+      state: getImportMappedValue(row, fieldMapping.state),
+      zip: getImportMappedValue(row, fieldMapping.zip),
+      phone: getImportMappedValue(row, fieldMapping.phone),
+      email: getImportMappedValue(row, fieldMapping.contactEmail),
+      website: getImportMappedValue(row, fieldMapping.website),
+      contactName: getImportMappedValue(row, fieldMapping.contactName),
+      contactRole: getImportMappedValue(row, fieldMapping.contactRole),
+      contactPhone: getImportMappedValue(row, fieldMapping.contactPhone),
+      contactEmail: getImportMappedValue(row, fieldMapping.contactEmail),
+      notes: getImportMappedValue(row, fieldMapping.notes)
     }))
-    .filter((row) => row.companyName);
+  };
 }
 
 function buildImportedContact(row: ProspectImportRow, companyId: string): Contact | null {
@@ -3055,6 +3436,141 @@ function buildImportedContact(row: ProspectImportRow, companyId: string): Contac
     source: "Import",
     createdBy: "Import"
   };
+}
+
+const importFieldAliases: Record<ImportFieldKey, string[]> = {
+  companyName: ["company", "company name", "business", "business name", "account", "account name", "name"],
+  status: ["status", "type", "stage", "category"],
+  address: ["address", "street", "street address", "address 1", "mailing address"],
+  city: ["city", "town"],
+  state: ["state", "st"],
+  zip: ["zip", "zipcode", "zip code", "postal code"],
+  phone: ["phone", "company phone", "main phone", "office phone", "telephone", "number"],
+  website: ["website", "web", "url", "company website"],
+  notes: ["notes", "note", "comments", "description"],
+  contactName: ["contact", "contact name", "primary contact", "poc", "point of contact", "name of contact"],
+  contactRole: ["title", "role", "contact title", "job title", "department"],
+  contactPhone: ["contact phone", "mobile", "cell", "direct phone", "phone number"],
+  contactEmail: ["email", "contact email", "e-mail", "email address"]
+};
+
+function buildImportPreview(
+  fileName: string,
+  parsedImport: {
+    headers: string[];
+    normalizedHeaders: string[];
+    fieldMapping: Record<ImportFieldKey, string>;
+    rows: ProspectImportRow[];
+    unmappedColumns: string[];
+  },
+  existingCompanies: Company[]
+): ImportPreview {
+  const existingNames = new Set(existingCompanies.map((company) => normalizeCompanyName(company.name)));
+  const seenNames = new Set<string>();
+
+  return {
+    fileName,
+    detectedColumns: parsedImport.headers,
+    normalizedColumns: parsedImport.normalizedHeaders,
+    fieldMapping: parsedImport.fieldMapping,
+    unmappedColumns: parsedImport.unmappedColumns,
+    rows: parsedImport.rows.map((row, index) => {
+      const normalizedName = normalizeCompanyName(row.companyName);
+      let skippedReason = "";
+
+      if (!normalizedName) {
+        skippedReason = "Missing company name";
+      } else if (existingNames.has(normalizedName)) {
+        skippedReason = "Duplicate company already exists";
+      } else if (seenNames.has(normalizedName)) {
+        skippedReason = "Duplicate company in import file";
+      }
+
+      if (normalizedName) {
+        seenNames.add(normalizedName);
+      }
+
+      return {
+        rowNumber: index + 2,
+        row,
+        action: skippedReason ? "skip" : "ready",
+        skippedReason
+      };
+    })
+  };
+}
+
+function getImportHeaders(rows: Array<Record<string, unknown>>) {
+  const headers = new Set<string>();
+
+  rows.forEach((row) => {
+    Object.keys(row).forEach((header) => {
+      if (header.trim()) {
+        headers.add(header.trim());
+      }
+    });
+  });
+
+  return [...headers];
+}
+
+function mapImportHeaders(headers: string[]): Record<ImportFieldKey, string> {
+  const normalizedHeaderMap = new Map(headers.map((header) => [normalizeImportHeader(header), header]));
+
+  return Object.fromEntries(
+    Object.entries(importFieldAliases).map(([field, aliases]) => {
+      const matchedHeader =
+        aliases.map(normalizeImportHeader).map((alias) => normalizedHeaderMap.get(alias)).find(Boolean) ?? "";
+
+      return [field, matchedHeader];
+    })
+  ) as Record<ImportFieldKey, string>;
+}
+
+function getImportMappedValue(row: Record<string, unknown>, mappedHeader: string) {
+  if (!mappedHeader) {
+    return "";
+  }
+
+  const value = row[mappedHeader];
+
+  return value == null ? "" : String(value).trim();
+}
+
+function getImportValueByAliases(row: Record<string, unknown>, aliases: string[]) {
+  const entries = Object.entries(row);
+  const normalizedAliases = new Set(aliases.map(normalizeImportHeader));
+  const match = entries.find(([key]) => normalizedAliases.has(normalizeImportHeader(key)));
+
+  return match?.[1] == null ? "" : String(match[1]).trim();
+}
+
+function normalizeImportHeader(value: string) {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[_/-]+/g, " ")
+    .replace(/\s+/g, " ");
+}
+
+function formatImportField(field: ImportFieldKey) {
+  const labels: Record<ImportFieldKey, string> = {
+    companyName: "Company Name",
+    status: "Status",
+    address: "Address",
+    city: "City",
+    state: "State",
+    zip: "Zip",
+    phone: "Phone",
+    website: "Website",
+    notes: "Notes",
+    contactName: "Contact Name",
+    contactRole: "Contact Title",
+    contactPhone: "Contact Phone",
+    contactEmail: "Contact Email"
+  };
+
+  return labels[field];
 }
 
 function parseCsv(value: string) {
@@ -3107,14 +3623,6 @@ function parseCsv(value: string) {
   return dataRows.map((row) =>
     Object.fromEntries(headers.map((header, index) => [header.trim(), row[index]?.trim() ?? ""]))
   );
-}
-
-function getImportValue(row: Record<string, unknown>, columnName: string) {
-  const match = Object.entries(row).find(
-    ([key]) => key.trim().toLowerCase() === columnName.toLowerCase()
-  );
-
-  return match?.[1] == null ? "" : String(match[1]).trim();
 }
 
 function parseImportStatus(value: string): CompanyStatus {
