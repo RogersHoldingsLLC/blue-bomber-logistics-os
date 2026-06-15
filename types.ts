@@ -14,6 +14,8 @@ export type Contact = {
   email: string;
   phone: string;
   lastContact?: string;
+  source?: string;
+  createdBy?: string;
 };
 
 export type Task = {

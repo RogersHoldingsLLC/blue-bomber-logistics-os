@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import type { User } from "@supabase/supabase-js";
 import * as XLSX from "xlsx";
 import {
   carriers as seedCarriers,
@@ -21,8 +22,16 @@ import {
   saveSupabaseState
 } from "@/lib/supabase-storage";
 import { createUuid } from "@/lib/uuid";
+import { supabase } from "@/lib/supabase";
 import type { Carrier, Company, CompanyStatus, Contact, Task, TimelineEntry } from "@/types";
 
+type AppRole = "Admin" | "Operations";
+type AppUser = {
+  id: string;
+  email: string;
+  name: string;
+  role: AppRole;
+};
 type ProfileTab = "tasks" | "contacts" | "freight" | "files";
 type QuickCreateType = "prospect" | "customer" | "carrier";
 type ManualContactInput = {
@@ -87,6 +96,39 @@ const profileTabs: Array<{ id: ProfileTab; label: string }> = [
   { id: "files", label: "Files" }
 ];
 
+function mapSupabaseUser(user: User): AppUser {
+  const metadataName = [user.user_metadata?.name, user.user_metadata?.full_name]
+    .filter(Boolean)
+    .join(" ");
+  const email = user.email ?? "";
+  const identityText = `${email} ${metadataName}`.toLowerCase();
+
+  if (identityText.includes("brian")) {
+    return {
+      id: user.id,
+      email,
+      name: "Brian",
+      role: "Admin"
+    };
+  }
+
+  if (identityText.includes("louie")) {
+    return {
+      id: user.id,
+      email,
+      name: "Louie",
+      role: "Operations"
+    };
+  }
+
+  return {
+    id: user.id,
+    email,
+    name: metadataName || email.split("@")[0] || "User",
+    role: "Operations"
+  };
+}
+
 function statusLabel(status: CompanyStatus) {
   return status === "prospect" ? "Prospect" : "Customer";
 }
@@ -111,11 +153,19 @@ function getPrimaryContact(company: Company, contacts: Contact[]) {
 }
 
 function getCompanyWebsite(company: Company) {
-  const websiteLine = company.smartNotes
-    .split("\n")
-    .find((line) => line.trim().toLowerCase().startsWith("website:"));
+  return getSmartNoteField(company, "website");
+}
 
-  return websiteLine?.replace(/^website:\s*/i, "").trim() || "";
+function getCompanyAddress(company: Company) {
+  return getSmartNoteField(company, "address");
+}
+
+function getSmartNoteField(company: Company, fieldName: string) {
+  const fieldLine = company.smartNotes
+    .split("\n")
+    .find((line) => line.trim().toLowerCase().startsWith(`${fieldName.toLowerCase()}:`));
+
+  return fieldLine?.replace(new RegExp(`^${fieldName}:\\s*`, "i"), "").trim() || "";
 }
 
 function getCompanyTimelineRows(company: Company, timeline: TimelineEntry[]): ProfileTimelineRow[] {
@@ -141,12 +191,14 @@ function buildAccountSummary(
   const primaryContact = getPrimaryContact(company, contacts);
   const mostRecentContact = getMostRecentContact(contacts, timelineRows);
   const latestNote = timelineRows[0]?.detail;
+  const nextAction = getNextAction(openTasks);
   const taskSentence = openTasks.length
     ? `${openTasks.length} open task${openTasks.length === 1 ? "" : "s"} need attention, led by ${openTasks[0].owner} on ${openTasks[0].title}.`
     : "There are no open tasks on this account right now.";
 
   return [
     `${company.name} is a ${statusLabel(company.status).toLowerCase()} account${location === "Not set" ? "" : ` in ${location}`}${company.segment ? ` for ${company.segment.toLowerCase()} work` : ""}.`,
+    nextAction ? `Next action: ${nextAction.title}${nextAction.due ? `, ${nextAction.due}` : ""}.` : "",
     mostRecentContact
       ? `Most recent contact: ${mostRecentContact}.`
       : primaryContact
@@ -154,7 +206,11 @@ function buildAccountSummary(
       : "No primary contact is set yet.",
     latestNote ? `Most recent note: ${latestNote}` : `${contacts.length} contact${contacts.length === 1 ? "" : "s"} saved on the account.`,
     `${taskSentence} Freight opportunity: ${company.currentOpportunity || "Not set yet."}`
-  ].slice(0, 4);
+  ].filter(Boolean).slice(0, 4);
+}
+
+function getNextAction(openTasks: Task[]) {
+  return openTasks[0] ?? null;
 }
 
 function getMostRecentContact(contacts: Contact[], timelineRows: ProfileTimelineRow[]) {
@@ -181,6 +237,9 @@ function taskStatusLabel(status: Task["status"]) {
 }
 
 export default function Home() {
+  const [authInitialized, setAuthInitialized] = useState(false);
+  const [appUser, setAppUser] = useState<AppUser | null>(null);
+  const [showUserMenu, setShowUserMenu] = useState(false);
   const [companies, setCompanies] = useState(seedCompanies);
   const [contacts, setContacts] = useState(seedContacts);
   const [tasks, setTasks] = useState(seedTasks);
@@ -193,6 +252,7 @@ export default function Home() {
   const [currentView, setCurrentView] = useState<AppView>("home");
   const [taskFilter, setTaskFilter] = useState<TaskFilter>("today");
   const [taskSearch, setTaskSearch] = useState("");
+  const [globalSearch, setGlobalSearch] = useState("");
   const [showTaskAdvanced, setShowTaskAdvanced] = useState(false);
   const [showProspectForm, setShowProspectForm] = useState(false);
   const [quickCreateType, setQuickCreateType] = useState<QuickCreateType>("prospect");
@@ -205,6 +265,81 @@ export default function Home() {
   const [selectedBulkProspectIds, setSelectedBulkProspectIds] = useState<string[]>([]);
   const importInputRef = useRef<HTMLInputElement | null>(null);
   const [noteResult, setNoteResult] = useState<NoteSaveResult | null>(null);
+
+  useEffect(() => {
+    let isMounted = true;
+    let fallbackTimer: number | null = null;
+
+    if (!supabase) {
+      setAuthInitialized(true);
+      return () => {
+        isMounted = false;
+      };
+    }
+
+    fallbackTimer = window.setTimeout(() => {
+      if (isMounted) {
+        setAuthInitialized(true);
+      }
+    }, 2500);
+
+    void supabase.auth.getSession().then(({ data, error }) => {
+      if (error) {
+        console.error("[Blue Bomber Auth] session load failed:", error.message);
+      }
+
+      if (!isMounted) {
+        return;
+      }
+
+      if (fallbackTimer) {
+        window.clearTimeout(fallbackTimer);
+      }
+
+      const nextUser = data.session?.user ? mapSupabaseUser(data.session.user) : null;
+
+      console.log("[Blue Bomber Auth] session found:", Boolean(nextUser));
+      if (nextUser) {
+        console.log("[Blue Bomber Auth] logged in user:", {
+          name: nextUser.name,
+          role: nextUser.role,
+          email: nextUser.email
+        });
+      }
+
+      setAppUser(nextUser);
+      setAuthInitialized(true);
+    });
+
+    const {
+      data: { subscription }
+    } = supabase?.auth.onAuthStateChange((_event, session) => {
+      const nextUser = session?.user ? mapSupabaseUser(session.user) : null;
+
+      if (nextUser) {
+        console.log("[Blue Bomber Auth] logged in user:", {
+          name: nextUser.name,
+          role: nextUser.role,
+          email: nextUser.email
+        });
+      }
+
+      setAppUser(nextUser);
+      setShowUserMenu(false);
+
+      if (!session?.user) {
+        setHasHydratedStorage(false);
+      }
+    }) ?? { data: { subscription: null } };
+
+    return () => {
+      isMounted = false;
+      if (fallbackTimer) {
+        window.clearTimeout(fallbackTimer);
+      }
+      subscription?.unsubscribe();
+    };
+  }, []);
 
   useEffect(() => {
     const storedTheme = window.localStorage.getItem(THEME_STORAGE_KEY);
@@ -225,6 +360,10 @@ export default function Home() {
   }, [hasHydratedTheme, themeMode]);
 
   useEffect(() => {
+    if (!authInitialized || !appUser) {
+      return;
+    }
+
     let isMounted = true;
 
     async function hydrateState() {
@@ -284,7 +423,7 @@ export default function Home() {
     return () => {
       isMounted = false;
     };
-  }, []);
+  }, [appUser, authInitialized]);
 
   useEffect(() => {
     if (!hasHydratedStorage) {
@@ -347,6 +486,10 @@ export default function Home() {
     () => entityNameById(visibleCompanies, carrierItems),
     [carrierItems, visibleCompanies]
   );
+  const taskSearchTextById = useMemo(
+    () => entitySearchTextById(visibleCompanies, carrierItems, contacts, timeline),
+    [carrierItems, contacts, timeline, visibleCompanies]
+  );
   const activeTasks = useMemo(
     () =>
       tasks
@@ -393,9 +536,9 @@ export default function Home() {
 
           return true;
         })
-        .filter((task) => doesTaskMatchSearch(task, taskEntityNameById, taskSearch))
+        .filter((task) => doesTaskMatchSearch(task, taskSearchTextById, globalSearch || taskSearch))
         .sort(compareTasksByDueThenCreated),
-    [carrierIds, taskEntityNameById, taskFilter, taskSearch, tasks, visibleCompanyIds]
+    [carrierIds, globalSearch, taskFilter, taskSearch, taskSearchTextById, tasks, visibleCompanyIds]
   );
   const selectedCompanyTasks = selectedCompany
     ? tasks.filter((task) => task.companyId === selectedCompany.id)
@@ -406,9 +549,55 @@ export default function Home() {
   const companyContacts = selectedCompany
     ? contacts.filter((contact) => contact.companyId === selectedCompany.id)
     : [];
-  const prospectCompanies = visibleCompanies.filter((company) => company.status === "prospect");
-  const customerCompanies = visibleCompanies.filter((company) => company.status === "customer");
+  const prospectCompanies = useMemo(
+    () =>
+      visibleCompanies
+        .filter((company) => company.status === "prospect")
+        .filter((company) => doesCompanyMatchGlobalSearch(company, contacts, tasks, timeline, globalSearch)),
+    [contacts, globalSearch, tasks, timeline, visibleCompanies]
+  );
+  const customerCompanies = useMemo(
+    () =>
+      visibleCompanies
+        .filter((company) => company.status === "customer")
+        .filter((company) => doesCompanyMatchGlobalSearch(company, contacts, tasks, timeline, globalSearch)),
+    [contacts, globalSearch, tasks, timeline, visibleCompanies]
+  );
+  const visibleCarriers = useMemo(
+    () => carrierItems.filter((carrier) => doesCarrierMatchGlobalSearch(carrier, tasks, globalSearch)),
+    [carrierItems, globalSearch, tasks]
+  );
   const pageTitle = getPageTitle(currentView, selectedCompany, selectedCarrier);
+  const currentUserName = appUser?.name ?? "Blue Bomber OS";
+  const isAdmin = appUser?.role === "Admin";
+
+  async function login(email: string, password: string) {
+    if (!supabase) {
+      throw new Error("Supabase is not configured.");
+    }
+
+    const { error } = await supabase.auth.signInWithPassword({
+      email,
+      password
+    });
+
+    if (error) {
+      throw error;
+    }
+  }
+
+  async function logout() {
+    if (!supabase) {
+      return;
+    }
+
+    await supabase.auth.signOut();
+    setAppUser(null);
+    setSelectedCompanyId(null);
+    setSelectedCarrierId(null);
+    setSelectedTaskId(null);
+    setCurrentView("home");
+  }
 
   function selectCompany(companyId: string) {
     const company = companies.find((companyItem) => companyItem.id === companyId);
@@ -508,19 +697,19 @@ export default function Home() {
         completedAt: new Date().toISOString()
       },
       "Task Completed",
-      `${task.title} completed by ${task.owner}.`
+      `${task.title} completed by ${currentUserName}.`
     );
   }
 
-  function snoozeTask(task: Task) {
+  function setTaskDue(task: Task, due: string) {
     updateTaskLifecycle(
       task,
       {
-        due: "Tomorrow",
-        status: "waiting"
+        due,
+        status: task.status === "completed" || task.status === "cancelled" ? task.status : "open"
       },
       "Task Snoozed",
-      `${task.title} snoozed until Tomorrow.`
+      `${task.title} moved to ${due} by ${currentUserName}.`
     );
   }
 
@@ -535,7 +724,7 @@ export default function Home() {
       task,
       { owner: nextOwner },
       "Task Reassigned",
-      `${task.title} reassigned from ${task.owner} to ${nextOwner}.`
+      `${task.title} reassigned from ${task.owner} to ${nextOwner} by ${currentUserName}.`
     );
   }
 
@@ -561,7 +750,7 @@ export default function Home() {
         status: nextStatus === "overdue" && !isTaskOverdue({ ...task, due: nextDue }) ? "open" : nextStatus
       },
       "Task Edited",
-      `${task.title} edited.`
+      `${task.title} edited by ${currentUserName}.`
     );
   }
 
@@ -715,7 +904,9 @@ export default function Home() {
       role: values.role.trim(),
       phone: values.phone.trim(),
       email: values.email.trim(),
-      lastContact: ""
+      lastContact: "",
+      source: "Manual",
+      createdBy: currentUserName
     };
     const nextContacts = [newContact, ...contacts];
     const nextCompanies = companies.map((companyItem) =>
@@ -732,7 +923,7 @@ export default function Home() {
         id: createUuid(),
         companyId: company.id,
         at: "Contact Added",
-        body: `${newContact.name}${newContact.role ? `, ${newContact.role}` : ""}`,
+        body: `${newContact.name}${newContact.role ? `, ${newContact.role}` : ""} · Added by ${currentUserName}`,
         createdAt: now
       },
       ...timeline
@@ -767,14 +958,14 @@ export default function Home() {
       status: "open",
       createdAt: now,
       owner: values.owner.trim() || "Louie",
-      createdBy: "Manual",
+      createdBy: currentUserName,
       sourceCompany: company.name,
       sourceNote: "Manual task"
     };
     const taskTimelineEvent = createTaskTimelineEvent(
       newTask,
       "Task Created",
-      `${newTask.title} created for ${newTask.owner}.`
+      `${newTask.title} created for ${newTask.owner} by ${currentUserName}.`
     );
     const nextTasks = [newTask, ...tasks];
     const nextTimeline = taskTimelineEvent ? [taskTimelineEvent, ...timeline] : timeline;
@@ -1003,17 +1194,36 @@ export default function Home() {
     });
   }
 
+  if (!authInitialized || !appUser) {
+    return (
+      <LoginScreen
+        authAvailable={Boolean(supabase)}
+        isLoading={!authInitialized}
+        onLogin={login}
+      />
+    );
+  }
+
   return (
     <main className="shell">
       <section className="topbar" aria-label="Home">
         <div>
           <div className="brand-lockup">
-            <span className="brand-mark" aria-hidden="true">BB</span>
-            <p className="app-label">Blue Bomber Command Center</p>
+            <img className="brand-logo" src="/blue-bomber-logo.png" alt="Blue Bomber Logistics" />
           </div>
           <h1>{pageTitle}</h1>
         </div>
         <div className="topbar-actions">
+          <label className="global-search" htmlFor="global-search">
+            <span>Search</span>
+            <input
+              id="global-search"
+              value={globalSearch}
+              onChange={(event) => setGlobalSearch(event.target.value)}
+              placeholder="Search Companies, Contacts, Tasks..."
+              type="search"
+            />
+          </label>
           <nav className="view-nav" aria-label="Primary navigation">
             <button
               className={currentView === "home" ? "active" : ""}
@@ -1072,6 +1282,24 @@ export default function Home() {
             <button className="secondary-action" type="button" onClick={() => openQuickCreate("carrier")}>
               Add Carrier
             </button>
+          </div>
+          <div className="user-menu">
+            <button
+              className="user-menu-trigger"
+              type="button"
+              onClick={() => setShowUserMenu((value) => !value)}
+            >
+              <strong>{appUser.name}</strong>
+              <span>{appUser.role}</span>
+            </button>
+            {showUserMenu ? (
+              <div className="user-menu-panel">
+                <span>{appUser.email}</span>
+                <button type="button" onClick={() => void logout()}>
+                  Logout
+                </button>
+              </div>
+            ) : null}
           </div>
         </div>
       </section>
@@ -1172,18 +1400,12 @@ export default function Home() {
             onOpenEntity={openTaskEntity}
             onOpenTaskDetail={openTaskDetail}
             onReassignTask={reassignTask}
-            onSnoozeTask={snoozeTask}
+            onSetTaskDue={setTaskDue}
             selectedTaskId={selectedTaskId}
             taskFilter={taskFilter}
             taskItems={taskItems}
             showAdvanced={showTaskAdvanced}
           />
-          {selectedTask ? (
-            <TaskDetail
-              entityLabel={getTaskEntityLabel(selectedTask, companies, carrierItems)}
-              task={selectedTask}
-            />
-          ) : null}
         </section>
       ) : null}
 
@@ -1193,6 +1415,7 @@ export default function Home() {
           importInputRef={importInputRef}
           importResult={importResult}
           isImporting={isImporting}
+          canManageList={isAdmin}
           selectedBulkProspectIds={selectedBulkProspectIds}
           title="Prospect List"
           onArchiveSelected={archiveSelectedProspects}
@@ -1207,6 +1430,7 @@ export default function Home() {
       {currentView === "customers" ? (
         <CompanyListPage
           companies={customerCompanies}
+          canManageList={false}
           selectedBulkProspectIds={[]}
           title="Customer List"
           onArchiveSelected={() => undefined}
@@ -1219,7 +1443,7 @@ export default function Home() {
       ) : null}
 
       {currentView === "carriers" ? (
-        <CarrierListPage carriers={carrierItems} onSelect={selectCarrier} />
+        <CarrierListPage carriers={visibleCarriers} onSelect={selectCarrier} />
       ) : null}
 
       {(currentView === "prospect-profile" || currentView === "customer-profile") && selectedCompany ? (
@@ -1227,6 +1451,7 @@ export default function Home() {
           <CompanyProfile
             company={selectedCompany}
             contacts={companyContacts}
+            canManageAccount={isAdmin}
             onAddManualContact={(values) => addManualContact(selectedCompany, values)}
             onAddManualTask={(values) => addManualTask(selectedCompany, values)}
             onDeleteCompany={() => deleteCompany(selectedCompany)}
@@ -1251,14 +1476,14 @@ export default function Home() {
               }
 
               setSelectedTaskId(null);
-              const result = applyIntent(latestCompany.smartNotes, latestCompany, contacts);
+              const result = applyIntent(latestCompany.smartNotes, latestCompany, contacts, currentUserName);
               const nextCompanies = companies.map((company) =>
                 company.id === latestCompany.id ? { ...result.company, smartNotes: "" } : company
               );
               const nextTasks = result.tasks.length ? [...result.tasks, ...tasks] : tasks;
               const taskCreatedEvents = result.tasks
                 .map((task) =>
-                  createTaskTimelineEvent(task, "Task Created", `${task.title} created for ${task.owner}.`)
+                  createTaskTimelineEvent(task, "Task Created", `${task.title} created for ${task.owner} by ${task.createdBy}.`)
                 )
                 .filter((entry): entry is TimelineEntry => Boolean(entry));
               const nextTimeline = [
@@ -1292,12 +1517,6 @@ export default function Home() {
             timeline={timeline}
             noteResult={noteResult}
           />
-          {selectedTask ? (
-            <TaskDetail
-              entityLabel={getTaskEntityLabel(selectedTask, companies, carrierItems)}
-              task={selectedTask}
-            />
-          ) : null}
         </>
       ) : null}
 
@@ -1316,7 +1535,7 @@ export default function Home() {
               }
 
               setSelectedTaskId(null);
-              const result = applyCarrierIntent(note, selectedCarrier);
+              const result = applyCarrierIntent(note, selectedCarrier, currentUserName);
               const nextTasks = result.tasks.length ? [...result.tasks, ...tasks] : tasks;
 
               if (result.tasks.length) {
@@ -1335,19 +1554,87 @@ export default function Home() {
             }}
             onNoteChange={setCarrierNote}
           />
-          {selectedTask ? (
-            <TaskDetail
-              entityLabel={getTaskEntityLabel(selectedTask, companies, carrierItems)}
-              task={selectedTask}
-            />
-          ) : null}
         </>
       ) : null}
     </main>
   );
 }
 
+function LoginScreen({
+  authAvailable,
+  isLoading,
+  onLogin
+}: {
+  authAvailable: boolean;
+  isLoading: boolean;
+  onLogin: (email: string, password: string) => Promise<void>;
+}) {
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [errorMessage, setErrorMessage] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  async function submitLogin(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    if (!authAvailable || isLoading) {
+      return;
+    }
+
+    setIsSubmitting(true);
+    setErrorMessage("");
+
+    try {
+      await onLogin(email.trim(), password);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Login failed.");
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
+  return (
+    <main className="login-shell">
+      <section className="login-card" aria-label="Login">
+        <img className="login-logo" src="/blue-bomber-logo.png" alt="Blue Bomber Logistics" />
+        <h1>Blue Bomber Logistics OS</h1>
+        <p>Operations Command Center</p>
+        <form onSubmit={submitLogin}>
+          <label>
+            Email
+            <input
+              autoComplete="email"
+              disabled={!authAvailable || isLoading || isSubmitting}
+              onChange={(event) => setEmail(event.target.value)}
+              placeholder="name@example.com"
+              type="email"
+              value={email}
+            />
+          </label>
+          <label>
+            Password
+            <input
+              autoComplete="current-password"
+              disabled={!authAvailable || isLoading || isSubmitting}
+              onChange={(event) => setPassword(event.target.value)}
+              placeholder="Password"
+              type="password"
+              value={password}
+            />
+          </label>
+          {errorMessage ? <p className="login-error">{errorMessage}</p> : null}
+          {!authAvailable ? <p className="login-error">Supabase is not configured.</p> : null}
+          <button disabled={!authAvailable || isLoading || isSubmitting} type="submit">
+            {isLoading ? "Checking session" : isSubmitting ? "Signing in" : "Sign In"}
+          </button>
+        </form>
+      </section>
+    </main>
+  );
+}
+
 function CompanyListPage({
+  canManageList,
   companies,
   importInputRef,
   importResult,
@@ -1361,6 +1648,7 @@ function CompanyListPage({
   onSelect,
   onToggleBulkProspect
 }: {
+  canManageList: boolean;
   companies: Company[];
   importInputRef?: React.RefObject<HTMLInputElement>;
   importResult?: { imported: number; skipped: number } | null;
@@ -1385,7 +1673,7 @@ function CompanyListPage({
           <h2>{title}</h2>
           <span>{companies.length} active</span>
         </div>
-        {isProspectList ? (
+        {isProspectList && canManageList ? (
           <div className="list-header-actions">
             {importInputRef ? (
               <div className="import-control">
@@ -1419,7 +1707,7 @@ function CompanyListPage({
         ) : null}
       </div>
 
-      {isProspectList && showListManagement ? (
+      {isProspectList && canManageList && showListManagement ? (
         <div className="bulk-control list-bulk-control" aria-label="Bulk prospect actions">
           <div className="bulk-actions horizontal">
             <span>{selectedBulkProspectIds.length} selected</span>
@@ -1458,7 +1746,7 @@ function CompanyListPage({
       <ul className="record-list">
         {companies.map((company) => (
           <li key={company.id}>
-            {isProspectList && showListManagement ? (
+            {isProspectList && canManageList && showListManagement ? (
               <input
                 aria-label={`Select ${company.name}`}
                 checked={selectedBulkProspectIds.includes(company.id)}
@@ -1593,6 +1881,7 @@ Confirm delivery`}
 }
 
 function CompanyProfile({
+  canManageAccount,
   company,
   contacts: companyContacts,
   tasks: companyTasks,
@@ -1604,6 +1893,7 @@ function CompanyProfile({
   onAddManualTask,
   onDeleteCompany
 }: {
+  canManageAccount: boolean;
   company: Company;
   contacts: typeof seedContacts;
   tasks: Task[];
@@ -1620,6 +1910,7 @@ function CompanyProfile({
   const openTasks = companyTasks.filter(isActiveTask).sort(compareTasksByDueThenCreated);
   const timelineRows = getCompanyTimelineRows(company, timeline);
   const accountSummary = buildAccountSummary(company, companyContacts, openTasks, timelineRows);
+  const nextAction = getNextAction(openTasks);
 
   function toggleSection(tab: ProfileTab) {
     setExpandedSection((currentSection) => (currentSection === tab ? null : tab));
@@ -1633,8 +1924,16 @@ function CompanyProfile({
           <h2>{company.name}</h2>
           <dl>
             <div>
-              <dt>City / State</dt>
-              <dd>{formatLocation(company)}</dd>
+              <dt>Address</dt>
+              <dd>{getCompanyAddress(company) || "Not set"}</dd>
+            </div>
+            <div>
+              <dt>City</dt>
+              <dd>{company.city || "Not set"}</dd>
+            </div>
+            <div>
+              <dt>State</dt>
+              <dd>{company.state || "Not set"}</dd>
             </div>
             {primaryContact?.phone ? (
               <div>
@@ -1661,6 +1960,19 @@ function CompanyProfile({
             <div>
               <dt>Open Tasks</dt>
               <dd>{openTasks.length}</dd>
+            </div>
+            <div className="next-action-row">
+              <dt>Next Action</dt>
+              <dd>
+                {nextAction ? (
+                  <>
+                    <strong>{nextAction.title}</strong>
+                    <span>{nextAction.due || "Not set"}</span>
+                  </>
+                ) : (
+                  "None"
+                )}
+              </dd>
             </div>
           </dl>
         </section>
@@ -1709,9 +2021,11 @@ function CompanyProfile({
             <button className="files-button" type="button">
               Files
             </button>
-            <button className="delete-button" type="button" onClick={onDeleteCompany}>
-              Delete Account
-            </button>
+            {canManageAccount ? (
+              <button className="delete-button" type="button" onClick={onDeleteCompany}>
+                Delete Account
+              </button>
+            ) : null}
           </div>
         </Panel>
       ) : null}
@@ -1863,6 +2177,11 @@ function CommandTimeline({
   onSmartNotesChange: (smartNotes: string) => void;
   onAddNote: () => void;
 }) {
+  const [showSystemEvents, setShowSystemEvents] = useState(false);
+  const humanRows = timelineRows.filter((entry) => !isSystemTimelineEvent(entry));
+  const systemRows = timelineRows.filter(isSystemTimelineEvent);
+  const visibleRows = showSystemEvents ? timelineRows : humanRows;
+
   return (
     <section className="command-timeline" aria-label="Call Notes">
       <div className="command-center">
@@ -1895,9 +2214,16 @@ Requested email only`}
       </div>
 
       <div className="timeline-stream">
-        <h3>Timeline</h3>
-        {timelineRows.length ? (
-          timelineRows.map((entry) => (
+        <div className="timeline-heading">
+          <h3>Timeline</h3>
+          {systemRows.length ? (
+            <button type="button" onClick={() => setShowSystemEvents((value) => !value)}>
+              {showSystemEvents ? "Hide System Events" : "Show System Events"}
+            </button>
+          ) : null}
+        </div>
+        {visibleRows.length ? (
+          visibleRows.map((entry) => (
             <div className={entry.type === "task" ? "timeline-item task-event" : "timeline-item"} key={entry.id}>
               <strong>{entry.title}</strong>
               <span>{entry.detail}</span>
@@ -2281,6 +2607,29 @@ function TaskDetail({ entityLabel, task }: { entityLabel: string; task: Task }) 
   );
 }
 
+function TaskCardDetail({ entityLabel, task }: { entityLabel: string; task: Task }) {
+  return (
+    <dl className="task-card-detail" aria-label="Task Detail">
+      <div>
+        <dt>Assigned To</dt>
+        <dd>{task.owner}</dd>
+      </div>
+      <div>
+        <dt>{entityLabel}</dt>
+        <dd>{task.sourceCompany}</dd>
+      </div>
+      <div>
+        <dt>Created</dt>
+        <dd>{formatDate(task.createdAt)}</dd>
+      </div>
+      <div className="source-note-row">
+        <dt>Source Note</dt>
+        <dd>{task.sourceNote}</dd>
+      </div>
+    </dl>
+  );
+}
+
 function TaskDashboard({
   entityNameById,
   onCompleteTask,
@@ -2288,7 +2637,7 @@ function TaskDashboard({
   onOpenEntity,
   onOpenTaskDetail,
   onReassignTask,
-  onSnoozeTask,
+  onSetTaskDue,
   selectedTaskId,
   showAdvanced,
   taskFilter,
@@ -2300,7 +2649,7 @@ function TaskDashboard({
   onOpenEntity: (task: Task) => void;
   onOpenTaskDetail: (task: Task) => void;
   onReassignTask: (task: Task) => void;
-  onSnoozeTask: (task: Task) => void;
+  onSetTaskDue: (task: Task, due: string) => void;
   selectedTaskId: string | null;
   showAdvanced: boolean;
   taskFilter: TaskFilter;
@@ -2341,7 +2690,7 @@ function TaskDashboard({
             onOpenEntity={onOpenEntity}
             onOpenTaskDetail={onOpenTaskDetail}
             onReassignTask={onReassignTask}
-            onSnoozeTask={onSnoozeTask}
+            onSetTaskDue={onSetTaskDue}
             selectedTaskId={selectedTaskId}
             tasks={section.tasks}
             title={section.title}
@@ -2358,7 +2707,7 @@ function TaskDashboardSection({
   onOpenEntity,
   onOpenTaskDetail,
   onReassignTask,
-  onSnoozeTask,
+  onSetTaskDue,
   selectedTaskId,
   tasks,
   title
@@ -2369,7 +2718,7 @@ function TaskDashboardSection({
   onOpenEntity: (task: Task) => void;
   onOpenTaskDetail: (task: Task) => void;
   onReassignTask: (task: Task) => void;
-  onSnoozeTask: (task: Task) => void;
+  onSetTaskDue: (task: Task, due: string) => void;
   selectedTaskId: string | null;
   tasks: Task[];
   title: string;
@@ -2389,7 +2738,11 @@ function TaskDashboardSection({
 
               return (
                 <li key={task.id}>
-                  <article className={isOpen ? "task-card selected" : "task-card"}>
+                  <article
+                    className={isOpen ? "task-card selected" : "task-card"}
+                    onDoubleClick={() => onOpenTaskDetail(task)}
+                    title="Double-click to expand"
+                  >
                     <span className={task.priority === "high" ? "task-dot high" : "task-dot"} />
                     <div className="task-card-main">
                       <strong>{task.title}</strong>
@@ -2418,26 +2771,32 @@ function TaskDashboardSection({
                       </dl>
                     </div>
                     <div className="task-card-actions">
-                      <button className="task-detail-button" type="button" onClick={() => onOpenTaskDetail(task)}>
-                        {isOpen ? "Close" : "Open"}
+                      <button type="button" onClick={() => onCompleteTask(task)}>
+                        Complete
                       </button>
-                      {isOpen ? (
-                        <>
-                          <button type="button" onClick={() => onCompleteTask(task)}>
-                            Complete
-                          </button>
-                          <button type="button" onClick={() => onSnoozeTask(task)}>
-                            Snooze
-                          </button>
+                      <button type="button" onClick={() => onSetTaskDue(task, "Tomorrow")}>
+                        Tomorrow
+                      </button>
+                      <button type="button" onClick={() => onSetTaskDue(task, "Friday")}>
+                        Friday
+                      </button>
+                      <button type="button" onClick={() => onSetTaskDue(task, "Next Week")}>
+                        Next Week
+                      </button>
+                    </div>
+                    {isOpen ? (
+                      <div className="task-card-expanded">
+                        <TaskCardDetail entityLabel="Account" task={task} />
+                        <div className="task-card-secondary-actions">
                           <button type="button" onClick={() => onReassignTask(task)}>
                             Reassign
                           </button>
                           <button type="button" onClick={() => onEditTask(task)}>
                             Edit
                           </button>
-                        </>
-                      ) : null}
-                    </div>
+                        </div>
+                      </div>
+                    ) : null}
                   </article>
                 </li>
               );
@@ -2495,10 +2854,59 @@ function getTaskEntityLabel(task: Task, companies: Company[], carriers: Carrier[
   return getTaskEntityType(task, companies, carriers) === "carrier" ? "Carrier" : "Company";
 }
 
+function isSystemTimelineEvent(entry: ProfileTimelineRow) {
+  const systemTitles = new Set([
+    "Task Created",
+    "Task Updated",
+    "Task Completed",
+    "Task Snoozed",
+    "Task Reassigned",
+    "Task Edited",
+    "Status Changed"
+  ]);
+
+  return entry.type === "task" || systemTitles.has(entry.title);
+}
+
 function entityNameById(companies: Company[], carriers: Carrier[]) {
   return {
     ...Object.fromEntries(companies.map((company) => [company.id, company.name])),
     ...Object.fromEntries(carriers.map((carrier) => [carrier.id, carrier.name]))
+  };
+}
+
+function entitySearchTextById(
+  companies: Company[],
+  carriers: Carrier[],
+  contacts: Contact[],
+  timeline: TimelineEntry[]
+) {
+  return {
+    ...Object.fromEntries(
+      companies.map((company) => {
+        const companyContacts = contacts.filter((contact) => contact.companyId === company.id);
+        const companyTimeline = timeline.filter((entry) => entry.companyId === company.id);
+
+        return [
+          company.id,
+          [
+            company.name,
+            company.city,
+            company.state,
+            company.currentOpportunity,
+            company.smartNotes,
+            ...companyContacts.flatMap((contact) => [contact.name, contact.role, contact.phone, contact.email]),
+            ...companyTimeline.flatMap((entry) => [entry.at, entry.body])
+          ].join(" ")
+        ];
+      })
+    ),
+    ...Object.fromEntries(
+      carriers.map((carrier) => [
+        carrier.id,
+        [carrier.name, carrier.city, carrier.state, carrier.equipment].join(" ")
+      ])
+    )
   };
 }
 
@@ -2667,8 +3075,59 @@ function doesTaskMatchSearch(task: Task, namesById: Record<string, string>, sear
 
   const entityName = namesById[getTaskEntityId(task)] ?? task.sourceCompany;
 
-  return [task.title, entityName, task.owner]
+  return [task.title, entityName, task.owner, task.sourceNote, task.sourceCompany]
     .some((value) => value.toLowerCase().includes(normalizedSearch));
+}
+
+function doesCompanyMatchGlobalSearch(
+  company: Company,
+  contacts: Contact[],
+  tasks: Task[],
+  timeline: TimelineEntry[],
+  search: string
+) {
+  const normalizedSearch = search.trim().toLowerCase();
+
+  if (!normalizedSearch) {
+    return true;
+  }
+
+  const companyContacts = contacts.filter((contact) => contact.companyId === company.id);
+  const companyTasks = tasks.filter((task) => task.companyId === company.id || getTaskEntityId(task) === company.id);
+  const companyTimeline = timeline.filter((entry) => entry.companyId === company.id);
+  const values = [
+    company.name,
+    company.city,
+    company.state,
+    company.segment,
+    company.currentOpportunity,
+    company.smartNotes,
+    company.lastContact,
+    ...companyContacts.flatMap((contact) => [contact.name, contact.role, contact.phone, contact.email]),
+    ...companyTasks.flatMap((task) => [task.title, task.owner, task.sourceNote]),
+    ...companyTimeline.flatMap((entry) => [entry.at, entry.body])
+  ];
+
+  return values.some((value) => value.toLowerCase().includes(normalizedSearch));
+}
+
+function doesCarrierMatchGlobalSearch(carrier: Carrier, tasks: Task[], search: string) {
+  const normalizedSearch = search.trim().toLowerCase();
+
+  if (!normalizedSearch) {
+    return true;
+  }
+
+  const carrierTasks = tasks.filter((task) => getTaskEntityId(task) === carrier.id);
+  const values = [
+    carrier.name,
+    carrier.city,
+    carrier.state,
+    carrier.equipment,
+    ...carrierTasks.flatMap((task) => [task.title, task.owner, task.sourceNote])
+  ];
+
+  return values.some((value) => value.toLowerCase().includes(normalizedSearch));
 }
 
 function groupTasksByOwner(tasks: Task[]) {
