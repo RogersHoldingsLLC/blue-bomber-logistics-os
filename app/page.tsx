@@ -37,6 +37,10 @@ type ManualTaskInput = {
   due: string;
   priority: Task["priority"];
 };
+type NoteSaveResult = {
+  contacts: string[];
+  tasks: Array<{ title: string; owner: string }>;
+};
 type ProfileTimelineRow = {
   id: string;
   title: string;
@@ -135,6 +139,7 @@ function buildAccountSummary(
 ) {
   const location = formatLocation(company);
   const primaryContact = getPrimaryContact(company, contacts);
+  const mostRecentContact = getMostRecentContact(contacts, timelineRows);
   const latestNote = timelineRows[0]?.detail;
   const taskSentence = openTasks.length
     ? `${openTasks.length} open task${openTasks.length === 1 ? "" : "s"} need attention, led by ${openTasks[0].owner} on ${openTasks[0].title}.`
@@ -142,12 +147,24 @@ function buildAccountSummary(
 
   return [
     `${company.name} is a ${statusLabel(company.status).toLowerCase()} account${location === "Not set" ? "" : ` in ${location}`}${company.segment ? ` for ${company.segment.toLowerCase()} work` : ""}.`,
-    primaryContact
+    mostRecentContact
+      ? `Most recent contact: ${mostRecentContact}.`
+      : primaryContact
       ? `${primaryContact.name}${primaryContact.role ? ` handles ${primaryContact.role.toLowerCase()}` : " is the primary contact"}${primaryContact.phone ? ` and can be reached at ${primaryContact.phone}` : ""}.`
       : "No primary contact is set yet.",
     latestNote ? `Most recent note: ${latestNote}` : `${contacts.length} contact${contacts.length === 1 ? "" : "s"} saved on the account.`,
     `${taskSentence} Freight opportunity: ${company.currentOpportunity || "Not set yet."}`
   ].slice(0, 4);
+}
+
+function getMostRecentContact(contacts: Contact[], timelineRows: ProfileTimelineRow[]) {
+  const latestContactEvent = timelineRows.find((entry) => entry.title === "Contact Added");
+
+  if (latestContactEvent?.detail) {
+    return latestContactEvent.detail;
+  }
+
+  return contacts.find((contact) => contact.lastContact === "Today")?.name ?? "";
 }
 
 function taskStatusLabel(status: Task["status"]) {
@@ -187,9 +204,7 @@ export default function Home() {
   const [isImporting, setIsImporting] = useState(false);
   const [selectedBulkProspectIds, setSelectedBulkProspectIds] = useState<string[]>([]);
   const importInputRef = useRef<HTMLInputElement | null>(null);
-  const [noteResult, setNoteResult] = useState<{ tasks: Array<{ title: string; owner: string }> } | null>(
-    null
-  );
+  const [noteResult, setNoteResult] = useState<NoteSaveResult | null>(null);
 
   useEffect(() => {
     const storedTheme = window.localStorage.getItem(THEME_STORAGE_KEY);
@@ -1246,7 +1261,12 @@ export default function Home() {
                   createTaskTimelineEvent(task, "Task Created", `${task.title} created for ${task.owner}.`)
                 )
                 .filter((entry): entry is TimelineEntry => Boolean(entry));
-              const nextTimeline = [...taskCreatedEvents, result.timelineEntry, ...timeline];
+              const nextTimeline = [
+                ...taskCreatedEvents,
+                ...result.contactTimelineEntries,
+                result.timelineEntry,
+                ...timeline
+              ];
 
               setCompanies(nextCompanies);
               setContacts(result.contacts);
@@ -1263,6 +1283,7 @@ export default function Home() {
                 timeline: nextTimeline
               }, result.tasks.length ? "adding note and generating task" : "adding note");
               setNoteResult({
+                contacts: result.contactsAdded,
                 tasks: result.tasks.map((task) => ({ title: task.title, owner: task.owner }))
               });
               window.setTimeout(() => setNoteResult(null), 5000);
@@ -1307,6 +1328,7 @@ export default function Home() {
                 tasks: nextTasks
               }, result.tasks.length ? "adding carrier note and generating task" : "adding carrier note");
               setNoteResult({
+                contacts: [],
                 tasks: result.tasks.map((task) => ({ title: task.title, owner: task.owner }))
               });
               window.setTimeout(() => setNoteResult(null), 5000);
@@ -1495,7 +1517,7 @@ function CarrierProfile({
 }: {
   carrier: Carrier;
   note: string;
-  noteResult: { tasks: Array<{ title: string; owner: string }> } | null;
+  noteResult: NoteSaveResult | null;
   tasks: Task[];
   onAddNote: () => void;
   onNoteChange: (note: string) => void;
@@ -1543,7 +1565,7 @@ Confirm delivery`}
               Add Note
             </button>
           </div>
-          {noteResult ? <NoteSavedMessage tasks={noteResult.tasks} /> : null}
+          {noteResult ? <NoteSavedMessage contacts={noteResult.contacts} tasks={noteResult.tasks} /> : null}
         </div>
 
         {showCarrierDetails ? (
@@ -1586,7 +1608,7 @@ function CompanyProfile({
   contacts: typeof seedContacts;
   tasks: Task[];
   timeline: typeof seedTimeline;
-  noteResult: { tasks: Array<{ title: string; owner: string }> } | null;
+  noteResult: NoteSaveResult | null;
   onSmartNotesChange: (smartNotes: string) => void;
   onAddNote: () => void;
   onAddManualContact: (values: ManualContactInput) => void;
@@ -1837,7 +1859,7 @@ function CommandTimeline({
 }: {
   company: Company;
   timelineRows: ProfileTimelineRow[];
-  noteResult: { tasks: Array<{ title: string; owner: string }> } | null;
+  noteResult: NoteSaveResult | null;
   onSmartNotesChange: (smartNotes: string) => void;
   onAddNote: () => void;
 }) {
@@ -1869,7 +1891,7 @@ Requested email only`}
             Add Note
           </button>
         </div>
-        {noteResult ? <NoteSavedMessage tasks={noteResult.tasks} /> : null}
+        {noteResult ? <NoteSavedMessage contacts={noteResult.contacts} tasks={noteResult.tasks} /> : null}
       </div>
 
       <div className="timeline-stream">
@@ -1898,10 +1920,13 @@ function Panel({ title, children }: { title: string; children: React.ReactNode }
   );
 }
 
-function NoteSavedMessage({ tasks }: { tasks: Array<{ title: string; owner: string }> }) {
+function NoteSavedMessage({ contacts, tasks }: NoteSaveResult) {
   return (
     <div className="note-saved" role="status">
       <strong>✓ Note Saved</strong>
+      {contacts.map((contactName) => (
+        <span key={contactName}>✓ Contact Added: {contactName}</span>
+      ))}
       {tasks.length ? (
         <>
           <span>Tasks Created:</span>
@@ -1914,7 +1939,7 @@ function NoteSavedMessage({ tasks }: { tasks: Array<{ title: string; owner: stri
           </ul>
         </>
       ) : (
-        <span>No tasks created.</span>
+        <span>{contacts.length ? "No tasks created." : "No tasks or contacts created."}</span>
       )}
     </div>
   );

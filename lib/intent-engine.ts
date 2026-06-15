@@ -26,8 +26,10 @@ type CarrierTaskIntentRule = {
 export type IntentResult = {
   company: Company;
   contacts: Contact[];
+  contactsAdded: string[];
   tasks: Task[];
   timelineEntry: TimelineEntry;
+  contactTimelineEntries: TimelineEntry[];
 };
 
 export type CarrierIntentResult = {
@@ -234,6 +236,25 @@ const activityIntentRules: ActivityIntentRule[] = [
   }
 ];
 
+const ignoredContactWords = new Set([
+  "today",
+  "tomorrow",
+  "monday",
+  "tuesday",
+  "wednesday",
+  "thursday",
+  "friday",
+  "saturday",
+  "sunday",
+  "load",
+  "loads",
+  "truck",
+  "trucks",
+  "carrier",
+  "customer",
+  "prospect"
+]);
+
 const carrierTaskIntentRules: CarrierTaskIntentRule[] = [
   {
     match: "need coi",
@@ -290,6 +311,7 @@ export function applyIntent(
     createdAt: timestamp
   };
   const matchedTaskRules = normalizedSentences.flatMap((sentence) => findTaskRulesForSentence(sentence));
+  const contactDetection = detectAndCreateContacts(note, company, contacts, timestamp, today);
 
   console.log("[Blue Bomber Intent] note received:", note);
   console.log(
@@ -342,12 +364,15 @@ export function applyIntent(
     return {
       company: {
         ...company,
+        lastContact: contactDetection.contactsAdded.length ? today : company.lastContact,
         lastActivity: today,
         active: true
       },
-      contacts,
+      contacts: contactDetection.contacts,
+      contactsAdded: contactDetection.contactsAdded,
       tasks: generatedTasks,
-      timelineEntry
+      timelineEntry,
+      contactTimelineEntries: contactDetection.timelineEntries
     };
   }
 
@@ -359,32 +384,38 @@ export function applyIntent(
     const contactName = extractTalkedToContact(note);
     const updatedContacts =
       activityRule.updatesLastContact && contactName
-        ? updateContactLastContact(contacts, company.id, contactName, today)
-        : contacts;
+        ? updateContactLastContact(contactDetection.contacts, company.id, contactName, today)
+        : contactDetection.contacts;
 
     return {
       company: {
         ...company,
         status: activityRule.updatesStatusToCustomer ? "customer" : company.status,
-        lastContact: activityRule.updatesLastContact ? today : company.lastContact,
+        lastContact:
+          activityRule.updatesLastContact || contactDetection.contactsAdded.length ? today : company.lastContact,
         lastActivity: today,
         active: true
       },
       contacts: updatedContacts,
+      contactsAdded: contactDetection.contactsAdded,
       tasks: [],
-      timelineEntry
+      timelineEntry,
+      contactTimelineEntries: contactDetection.timelineEntries
     };
   }
 
   return {
     company: {
       ...company,
+      lastContact: contactDetection.contactsAdded.length ? today : company.lastContact,
       lastActivity: today,
       active: true
     },
-    contacts,
+    contacts: contactDetection.contacts,
+    contactsAdded: contactDetection.contactsAdded,
     tasks: [],
-    timelineEntry
+    timelineEntry,
+    contactTimelineEntries: contactDetection.timelineEntries
   };
 }
 
@@ -408,6 +439,109 @@ function findTaskRulesForSentence(sentence: string) {
           otherRule.match.length > rule.match.length
       )
   );
+}
+
+function detectAndCreateContacts(
+  note: string,
+  company: Company,
+  contacts: Contact[],
+  timestamp: string,
+  today: string
+) {
+  const detectedNames = extractProbableContactNames(note);
+  const companyContacts = contacts.filter((contact) => contact.companyId === company.id);
+  const existingNames = new Set(companyContacts.map((contact) => normalizeContactName(contact.name)));
+  const existingFirstNames = new Set(
+    companyContacts.map((contact) => normalizeContactName(contact.name.split(/\s+/)[0] ?? ""))
+  );
+
+  const contactsToAdd = detectedNames.filter((name) => {
+    const normalizedName = normalizeContactName(name);
+    const firstName = normalizeContactName(name.split(/\s+/)[0] ?? "");
+
+    return normalizedName && !existingNames.has(normalizedName) && !existingFirstNames.has(firstName);
+  });
+  const newContacts = contactsToAdd.map<Contact>((name) => ({
+    id: createUuid(),
+    companyId: company.id,
+    name,
+    role: "Activity Note",
+    email: "",
+    phone: "",
+    lastContact: today
+  }));
+  const timelineEntries = newContacts.map<TimelineEntry>((contact) => ({
+    id: createUuid(),
+    companyId: company.id,
+    at: "Contact Added",
+    body: contact.name,
+    createdAt: timestamp
+  }));
+
+  return {
+    contacts: newContacts.length ? [...newContacts, ...contacts] : contacts,
+    contactsAdded: newContacts.map((contact) => contact.name),
+    timelineEntries
+  };
+}
+
+function extractProbableContactNames(note: string) {
+  const names: string[] = [];
+  const sentences = note
+    .split(/[\n.!?]+/)
+    .map((sentence) => sentence.trim())
+    .filter(Boolean);
+  const triggerPatterns = [
+    /\b(?:[Ss]poke with|[Tt]alked to|[Rr]eceived email from|[Ee]mail from)\s+([A-Z][a-z]+(?:\s+(?:and|&)\s+[A-Z][a-z]+)?(?:\s+[A-Z][a-z]+)?)/g,
+    /^([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\s+(?:said|says|told|emailed|called|asked|requested)\b/g
+  ];
+
+  sentences.forEach((sentence) => {
+    triggerPatterns.forEach((pattern) => {
+      for (const match of sentence.matchAll(pattern)) {
+        const rawName = match[1] ?? "";
+
+        splitDetectedName(rawName).forEach((name) => {
+          if (isAllowedContactName(name) && !names.some((existingName) => namesMatch(existingName, name))) {
+            names.push(name);
+          }
+        });
+      }
+    });
+  });
+
+  return names;
+}
+
+function splitDetectedName(value: string) {
+  return value
+    .split(/\s+(?:and|&)\s+/i)
+    .map(cleanDetectedName)
+    .filter(Boolean);
+}
+
+function cleanDetectedName(value: string) {
+  return value
+    .replace(/[^a-zA-Z\s'-]/g, "")
+    .trim()
+    .split(/\s+/)
+    .filter((part) => !ignoredContactWords.has(part.toLowerCase()))
+    .slice(0, 2)
+    .join(" ");
+}
+
+function isAllowedContactName(value: string) {
+  const parts = value.split(/\s+/).filter(Boolean);
+
+  return Boolean(parts.length) && parts.every((part) => !ignoredContactWords.has(part.toLowerCase()));
+}
+
+function normalizeContactName(value: string) {
+  return value.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function namesMatch(firstName: string, secondName: string) {
+  return normalizeContactName(firstName) === normalizeContactName(secondName);
 }
 
 export function applyCarrierIntent(note: string, carrier: Carrier, now = new Date()): CarrierIntentResult {
