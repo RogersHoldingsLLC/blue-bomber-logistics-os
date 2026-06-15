@@ -1,4 +1,4 @@
-import type { Carrier, Company, Contact, Task, TimelineEntry } from "@/types";
+import type { AccountFile, Carrier, Company, Contact, Task, TimelineEntry } from "@/types";
 
 const STORAGE_KEY = "blue-bomber-logistics-os:v1";
 
@@ -8,6 +8,7 @@ export type StoredBlueBomberState = {
   tasks: Task[];
   timeline: TimelineEntry[];
   carriers: Carrier[];
+  files?: AccountFile[];
 };
 
 export function loadStoredState() {
@@ -38,7 +39,8 @@ export function loadStoredState() {
       contacts: parsedValue.contacts,
       tasks: parsedValue.tasks,
       timeline: parsedValue.timeline,
-      carriers: Array.isArray(parsedValue.carriers) ? parsedValue.carriers : []
+      carriers: Array.isArray(parsedValue.carriers) ? parsedValue.carriers : [],
+      files: Array.isArray(parsedValue.files) ? parsedValue.files : []
     };
   } catch {
     return null;

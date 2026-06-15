@@ -1,6 +1,9 @@
 import { supabase } from "@/lib/supabase";
 import type { StoredBlueBomberState } from "@/lib/storage";
-import type { Carrier, Company, Contact, Task, TimelineEntry } from "@/types";
+import { createUuid } from "@/lib/uuid";
+import type { AccountFile, Carrier, Company, Contact, Task, TimelineEntry } from "@/types";
+
+export const FILE_BUCKET = "blue-bomber-files";
 
 type CompanyRow = {
   id: string;
@@ -213,6 +216,52 @@ export async function saveSupabaseState(state: StoredBlueBomberState) {
   console.log("[Blue Bomber Supabase] save to Supabase success");
 
   return true;
+}
+
+export async function uploadSupabaseAccountFile({
+  accountId,
+  accountType,
+  file,
+  uploadedBy
+}: {
+  accountId: string;
+  accountType: AccountFile["accountType"];
+  file: File;
+  uploadedBy: string;
+}) {
+  if (!supabase) {
+    throw new Error("Supabase Storage is not configured.");
+  }
+
+  const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "-");
+  const path = `${accountType}/${accountId}/${createUuid()}-${safeName}`;
+  const result = await supabase.storage.from(FILE_BUCKET).upload(path, file, {
+    upsert: false,
+    metadata: {
+      accountId,
+      accountType,
+      originalName: file.name,
+      uploadedBy
+    }
+  });
+
+  if (result.error) {
+    console.error("[Blue Bomber Storage] upload failed:", formatSupabaseError(result.error));
+    throw new Error(
+      `File upload failed. Confirm Supabase Storage bucket "${FILE_BUCKET}" exists and allows uploads. ${result.error.message}`
+    );
+  }
+
+  return {
+    id: path,
+    accountId,
+    accountType,
+    name: file.name,
+    path,
+    size: file.size,
+    uploadedAt: new Date().toISOString(),
+    uploadedBy
+  } satisfies AccountFile;
 }
 
 export async function deleteSupabaseCompany(companyId: string) {

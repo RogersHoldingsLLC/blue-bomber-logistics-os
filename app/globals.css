@@ -465,12 +465,19 @@ h1 {
   padding: 10px;
 }
 
-.prospect-form input {
+.prospect-form input,
+.prospect-form select {
+  background: var(--input-surface);
   border: 1px solid var(--border);
   border-radius: 6px;
+  color: var(--text);
   flex: 1;
   min-height: 40px;
   padding: 0 12px;
+}
+
+.manual-action-form {
+  flex-wrap: wrap;
 }
 
 .prospect-form .ghost {
@@ -1203,7 +1210,37 @@ button.company-preview:hover {
 
 .profile-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
+}
+
+.compact-actions {
+  margin-top: 10px;
+}
+
+.account-edit-form {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin: 12px 0 0;
+}
+
+.account-edit-form button {
+  min-width: 88px;
+}
+
+.file-cabinet {
+  display: grid;
+  gap: 10px;
+}
+
+.error-text {
+  background: var(--surface-muted);
+  border: 1px solid var(--attention);
+  border-radius: 6px;
+  color: var(--attention);
+  font-size: 13px;
+  font-weight: 700;
+  margin: 0;
+  padding: 8px 10px;
 }
 
 .profile-top-row {

@@ -19,11 +19,12 @@ import {
   deleteSupabaseCompany,
   importSupabaseProspects,
   loadSupabaseState,
-  saveSupabaseState
+  saveSupabaseState,
+  uploadSupabaseAccountFile
 } from "@/lib/supabase-storage";
 import { createUuid } from "@/lib/uuid";
 import { supabase } from "@/lib/supabase";
-import type { Carrier, Company, CompanyStatus, Contact, Task, TimelineEntry } from "@/types";
+import type { AccountFile, Carrier, Company, CompanyStatus, Contact, Task, TimelineEntry } from "@/types";
 
 type AppRole = "Admin" | "Operations";
 type AppUser = {
@@ -46,9 +47,22 @@ type ManualTaskInput = {
   due: string;
   priority: Task["priority"];
 };
+type CompanyEditInput = {
+  name: string;
+  status: CompanyStatus;
+  address: string;
+  city: string;
+  state: string;
+  zip: string;
+  phone: string;
+  website: string;
+  primaryContact: string;
+  lastContact: string;
+};
 type NoteSaveResult = {
   contacts: string[];
   tasks: Array<{ title: string; owner: string }>;
+  systemUpdates: string[];
 };
 type ProfileTimelineRow = {
   id: string;
@@ -73,9 +87,17 @@ type ProspectImportRow = {
   status: CompanyStatus;
   salesLead: string;
   operationsLead: string;
+  address: string;
+  city: string;
+  state: string;
+  zip: string;
   phone: string;
   email: string;
   website: string;
+  contactName: string;
+  contactRole: string;
+  contactPhone: string;
+  contactEmail: string;
   notes: string;
 };
 
@@ -116,7 +138,7 @@ function mapSupabaseUser(user: User): AppUser {
       id: user.id,
       email,
       name: "Louie",
-      role: "Operations"
+      role: "Admin"
     };
   }
 
@@ -159,12 +181,29 @@ function getCompanyAddress(company: Company) {
   return getSmartNoteField(company, "address");
 }
 
+function getCompanyZip(company: Company) {
+  return getSmartNoteField(company, "zip");
+}
+
 function getSmartNoteField(company: Company, fieldName: string) {
   const fieldLine = company.smartNotes
     .split("\n")
     .find((line) => line.trim().toLowerCase().startsWith(`${fieldName.toLowerCase()}:`));
 
   return fieldLine?.replace(new RegExp(`^${fieldName}:\\s*`, "i"), "").trim() || "";
+}
+
+function setSmartNoteField(notes: string, fieldName: string, value: string) {
+  const trimmedValue = value.trim();
+  const lines = notes
+    .split("\n")
+    .filter((line) => !line.trim().toLowerCase().startsWith(`${fieldName.toLowerCase()}:`));
+
+  if (trimmedValue) {
+    lines.unshift(`${fieldName}: ${trimmedValue}`);
+  }
+
+  return lines.join("\n").trim();
 }
 
 function getCompanyTimelineRows(company: Company, timeline: TimelineEntry[]): ProfileTimelineRow[] {
@@ -245,6 +284,7 @@ export default function Home() {
   const [tasks, setTasks] = useState(seedTasks);
   const [timeline, setTimeline] = useState(seedTimeline);
   const [carrierItems, setCarrierItems] = useState(seedCarriers);
+  const [files, setFiles] = useState<AccountFile[]>([]);
   const [hasHydratedStorage, setHasHydratedStorage] = useState(false);
   const [selectedCompanyId, setSelectedCompanyId] = useState<string | null>(null);
   const [selectedCarrierId, setSelectedCarrierId] = useState<string | null>(null);
@@ -264,6 +304,14 @@ export default function Home() {
   const [selectedBulkProspectIds, setSelectedBulkProspectIds] = useState<string[]>([]);
   const importInputRef = useRef<HTMLInputElement | null>(null);
   const [noteResult, setNoteResult] = useState<NoteSaveResult | null>(null);
+  const [fileCabinetError, setFileCabinetError] = useState("");
+  const [showManualActionForm, setShowManualActionForm] = useState(false);
+  const [manualActionTitle, setManualActionTitle] = useState("");
+  const [manualActionEntityId, setManualActionEntityId] = useState("");
+  const [manualActionOwner, setManualActionOwner] = useState("Louie");
+  const [manualActionDueDate, setManualActionDueDate] = useState("Today");
+  const [manualActionDueTime, setManualActionDueTime] = useState("");
+  const [manualActionPriority, setManualActionPriority] = useState<Task["priority"]>("normal");
 
   useEffect(() => {
     let isMounted = true;
@@ -379,6 +427,7 @@ export default function Home() {
             setTasks(storedState.tasks);
             setTimeline(storedState.timeline);
             setCarrierItems(storedState.carriers.length ? storedState.carriers : seedCarriers);
+            setFiles(storedState.files ?? []);
           }
 
           return;
@@ -399,6 +448,7 @@ export default function Home() {
           ]);
           setTimeline(supabaseState.timeline);
           setCarrierItems(supabaseState.carriers);
+          setFiles(storedState?.files ?? []);
         }
       } catch {
         const storedState = loadStoredState();
@@ -409,6 +459,7 @@ export default function Home() {
           setTasks(storedState.tasks);
           setTimeline(storedState.timeline);
           setCarrierItems(storedState.carriers.length ? storedState.carriers : seedCarriers);
+          setFiles(storedState.files ?? []);
         }
       } finally {
         if (isMounted) {
@@ -434,9 +485,10 @@ export default function Home() {
       contacts,
       tasks,
       timeline,
-      carriers: carrierItems
+      carriers: carrierItems,
+      files
     });
-  }, [carrierItems, companies, contacts, hasHydratedStorage, tasks, timeline]);
+  }, [carrierItems, companies, contacts, files, hasHydratedStorage, tasks, timeline]);
 
   useEffect(() => {
     if (!hasHydratedStorage) {
@@ -794,6 +846,7 @@ export default function Home() {
     tasks: typeof tasks;
     timeline: typeof timeline;
     carriers: typeof carrierItems;
+    files: typeof files;
   }, reason: string) {
     console.log("[Blue Bomber Supabase] persist requested:", reason);
     console.log("[Blue Bomber Supabase] client available:", canUseSupabase());
@@ -822,13 +875,15 @@ export default function Home() {
     tasks?: typeof tasks;
     timeline?: typeof timeline;
     carriers?: typeof carrierItems;
+    files?: typeof files;
   }, reason = "state change") {
     void persistStateToStorage({
       companies: overrides.companies ?? companies,
       contacts: overrides.contacts ?? contacts,
       tasks: overrides.tasks ?? tasks,
       timeline: overrides.timeline ?? timeline,
-      carriers: overrides.carriers ?? carrierItems
+      carriers: overrides.carriers ?? carrierItems,
+      files: overrides.files ?? files
     }, reason);
   }
 
@@ -987,6 +1042,187 @@ export default function Home() {
     }, "adding manual task");
   }
 
+  function addGlobalManualAction() {
+    const trimmedTitle = manualActionTitle.trim();
+
+    if (!trimmedTitle || !manualActionEntityId) {
+      return;
+    }
+
+    const company = companies.find((companyItem) => companyItem.id === manualActionEntityId);
+    const carrier = carrierItems.find((carrierItem) => carrierItem.id === manualActionEntityId);
+
+    if (!company && !carrier) {
+      return;
+    }
+
+    const due = [manualActionDueDate.trim() || "Today", manualActionDueTime.trim()]
+      .filter(Boolean)
+      .join(" ");
+    const now = new Date().toISOString();
+    const newTask: Task = {
+      id: createUuid(),
+      companyId: manualActionEntityId,
+      entityId: manualActionEntityId,
+      entityType: carrier ? "carrier" : company?.status,
+      title: trimmedTitle,
+      due,
+      priority: manualActionPriority,
+      status: "open",
+      createdAt: now,
+      owner: manualActionOwner.trim() || "Louie",
+      createdBy: currentUserName,
+      sourceCompany: company?.name ?? carrier?.name ?? "",
+      sourceNote: "Manual action"
+    };
+    const event = createTaskTimelineEvent(
+      newTask,
+      "Action Created",
+      `${newTask.title} created for ${newTask.owner} by ${currentUserName}.`
+    );
+    const nextTasks = [newTask, ...tasks];
+    const nextTimeline = event ? [event, ...timeline] : timeline;
+
+    setTasks(nextTasks);
+    setTimeline(nextTimeline);
+    persistState({ tasks: nextTasks, timeline: nextTimeline }, "adding global manual action");
+    setManualActionTitle("");
+    setManualActionEntityId("");
+    setManualActionOwner("Louie");
+    setManualActionDueDate("Today");
+    setManualActionDueTime("");
+    setManualActionPriority("normal");
+    setShowManualActionForm(false);
+  }
+
+  function updateCompanyProfile(company: Company, values: CompanyEditInput) {
+    const now = new Date().toISOString();
+    const trimmedPrimaryName = values.primaryContact.trim();
+    const companyContact = contacts.find(
+      (contact) =>
+        contact.companyId === company.id &&
+        trimmedPrimaryName &&
+        normalizeCompanyName(contact.name) === normalizeCompanyName(trimmedPrimaryName)
+    );
+    const newPrimaryContact =
+      trimmedPrimaryName && !companyContact
+        ? {
+            id: createUuid(),
+            companyId: company.id,
+            name: trimmedPrimaryName,
+            role: "",
+            email: "",
+            phone: values.phone.trim(),
+            lastContact: values.lastContact.trim(),
+            source: "Manual",
+            createdBy: currentUserName
+          } satisfies Contact
+        : null;
+    const primaryContactId = companyContact?.id ?? newPrimaryContact?.id ?? company.primaryContactId;
+    const nextContacts = contacts
+      .map((contact) =>
+        contact.id === primaryContactId
+          ? {
+              ...contact,
+              name: trimmedPrimaryName || contact.name,
+              phone: values.phone.trim(),
+              lastContact: values.lastContact.trim() || contact.lastContact
+            }
+          : contact
+      )
+      .concat(newPrimaryContact ? [newPrimaryContact] : []);
+    const nextCompanies = companies.map((companyItem) => {
+      if (companyItem.id !== company.id) {
+        return companyItem;
+      }
+
+      let smartNotes = companyItem.smartNotes;
+      smartNotes = setSmartNoteField(smartNotes, "Address", values.address);
+      smartNotes = setSmartNoteField(smartNotes, "Zip", values.zip);
+      smartNotes = setSmartNoteField(smartNotes, "Website", values.website);
+
+      return {
+        ...companyItem,
+        name: values.name.trim() || companyItem.name,
+        status: values.status,
+        city: values.city.trim(),
+        state: values.state.trim(),
+        smartNotes,
+        primaryContactId,
+        lastContact: values.lastContact.trim(),
+        lastActivity: "Today"
+      };
+    });
+    const nextTimeline = [
+      {
+        id: createUuid(),
+        companyId: company.id,
+        at: "Account Updated",
+        body: `Account details updated by ${currentUserName}.`,
+        createdAt: now
+      },
+      ...timeline
+    ];
+
+    setCompanies(nextCompanies);
+    setContacts(nextContacts);
+    setTimeline(nextTimeline);
+    persistState({
+      companies: nextCompanies,
+      contacts: nextContacts,
+      timeline: nextTimeline
+    }, "updating company profile");
+
+    if (values.status !== company.status) {
+      setCurrentView(values.status === "customer" ? "customer-profile" : "prospect-profile");
+    }
+  }
+
+  function convertProspectToCustomer(company: Company) {
+    if (company.status !== "prospect") {
+      return;
+    }
+
+    if (!window.confirm("Convert this prospect to customer?")) {
+      return;
+    }
+
+    updateCompanyProfile(company, {
+      name: company.name,
+      status: "customer",
+      address: getCompanyAddress(company),
+      city: company.city,
+      state: company.state,
+      zip: getCompanyZip(company),
+      phone: getPrimaryContact(company, contacts)?.phone ?? "",
+      website: getCompanyWebsite(company),
+      primaryContact: getPrimaryContact(company, contacts)?.name ?? "",
+      lastContact: company.lastContact
+    });
+  }
+
+  async function uploadAccountFile(accountId: string, accountType: AccountFile["accountType"], file: File) {
+    setFileCabinetError("");
+
+    try {
+      const uploadedFile = await uploadSupabaseAccountFile({
+        accountId,
+        accountType,
+        file,
+        uploadedBy: currentUserName
+      });
+      const nextFiles = [uploadedFile, ...files];
+
+      setFiles(nextFiles);
+      persistState({ files: nextFiles }, "uploading account file");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "File upload failed.";
+
+      setFileCabinetError(message);
+      console.error("[Blue Bomber Files] file upload failed:", message);
+    }
+  }
+
   function deleteCompany(company: Company) {
     if (!window.confirm(`Delete ${company.name}? This will remove related contacts, tasks, and timeline entries.`)) {
       return;
@@ -996,11 +1232,13 @@ export default function Home() {
     const nextContacts = contacts.filter((contact) => contact.companyId !== company.id);
     const nextTasks = tasks.filter((task) => task.companyId !== company.id);
     const nextTimeline = timeline.filter((entry) => entry.companyId !== company.id);
+    const nextFiles = files.filter((file) => file.accountId !== company.id);
 
     setCompanies(nextCompanies);
     setContacts(nextContacts);
     setTasks(nextTasks);
     setTimeline(nextTimeline);
+    setFiles(nextFiles);
     setSelectedCompanyId(null);
     setSelectedTaskId(null);
     setCurrentView(company.status === "customer" ? "customers" : "prospects");
@@ -1009,7 +1247,8 @@ export default function Home() {
       contacts: nextContacts,
       tasks: nextTasks,
       timeline: nextTimeline,
-      carriers: carrierItems
+      carriers: carrierItems,
+      files: nextFiles
     });
 
     void deleteSupabaseCompany(company.id).catch((error) => {
@@ -1025,7 +1264,10 @@ export default function Home() {
 
     try {
       const rows = await readProspectImportRows(file);
-      const existingNames = new Set(companies.map((company) => normalizeCompanyName(company.name)));
+      const existingByName = new Map(companies.map((company) => [normalizeCompanyName(company.name), company]));
+      const contactKeys = new Set(
+        contacts.map((contact) => `${contact.companyId}:${normalizeCompanyName(contact.name)}:${contact.email.toLowerCase()}`)
+      );
       const seenNames = new Set<string>();
       const importedCompanies: Company[] = [];
       const importedContacts: Contact[] = [];
@@ -1033,31 +1275,56 @@ export default function Home() {
 
       rows.forEach((row) => {
         const normalizedName = normalizeCompanyName(row.companyName);
+        const existingCompany = existingByName.get(normalizedName);
 
-        if (!normalizedName || existingNames.has(normalizedName) || seenNames.has(normalizedName)) {
+        if (!normalizedName) {
           skipped += 1;
+          return;
+        }
+
+        if (existingCompany || seenNames.has(normalizedName)) {
+          skipped += 1;
+
+          const duplicateCompany =
+            existingCompany ?? importedCompanies.find((company) => normalizeCompanyName(company.name) === normalizedName);
+          const importedContact = buildImportedContact(row, duplicateCompany?.id ?? "");
+
+          if (duplicateCompany && importedContact) {
+            const contactKey = `${duplicateCompany.id}:${normalizeCompanyName(importedContact.name)}:${importedContact.email.toLowerCase()}`;
+
+            if (!contactKeys.has(contactKey)) {
+              importedContacts.push(importedContact);
+              contactKeys.add(contactKey);
+            }
+          }
+
           return;
         }
 
         seenNames.add(normalizedName);
 
         const companyId = createUuid();
-        const contactId = createUuid();
-        const smartNotes = [row.notes, row.website ? `Website: ${row.website}` : ""]
+        const importedContact = buildImportedContact(row, companyId);
+        const smartNotes = [
+          row.notes,
+          row.address ? `Address: ${row.address}` : "",
+          row.zip ? `Zip: ${row.zip}` : "",
+          row.website ? `Website: ${row.website}` : ""
+        ]
           .filter(Boolean)
           .join("\n");
         const company: Company = {
           id: companyId,
           name: row.companyName,
           status: row.status,
-          city: "Imported",
-          state: statusLabel(row.status),
+          city: row.city || "Imported",
+          state: row.state || statusLabel(row.status),
           segment: statusLabel(row.status),
           currentOpportunity: "Imported prospect. Add freight notes after first contact.",
           smartNotes,
           salesLead: row.salesLead || "Louie",
           operationsLead: row.operationsLead || "Brian",
-          primaryContactId: row.phone || row.email ? contactId : "",
+          primaryContactId: importedContact ? importedContact.id : "",
           lastContact: "",
           lastActivity: "Imported",
           active: true,
@@ -1067,27 +1334,22 @@ export default function Home() {
         };
 
         importedCompanies.push(company);
+        existingByName.set(normalizedName, company);
 
-        if (row.phone || row.email) {
-          importedContacts.push({
-            id: contactId,
-            companyId,
-            name: "Imported Contact",
-            role: "Imported",
-            email: row.email,
-            phone: row.phone
-          });
+        if (importedContact) {
+          importedContacts.push(importedContact);
+          contactKeys.add(`${company.id}:${normalizeCompanyName(importedContact.name)}:${importedContact.email.toLowerCase()}`);
         }
       });
 
-      if (importedCompanies.length) {
+      if (importedCompanies.length || importedContacts.length) {
         const savedToSupabase = await importSupabaseProspects(importedCompanies, importedContacts);
 
         if (!savedToSupabase) {
           throw new Error("Supabase client unavailable.");
         }
 
-        const nextCompanies = [...importedCompanies, ...companies];
+        const nextCompanies = importedCompanies.length ? [...importedCompanies, ...companies] : companies;
         const nextContacts = [...importedContacts, ...contacts];
 
         setCompanies(nextCompanies);
@@ -1097,7 +1359,8 @@ export default function Home() {
           contacts: nextContacts,
           tasks,
           timeline,
-          carriers: carrierItems
+          carriers: carrierItems,
+          files
         });
       }
 
@@ -1174,11 +1437,13 @@ export default function Home() {
     const nextContacts = contacts.filter((contact) => !selectedIds.has(contact.companyId));
     const nextTasks = tasks.filter((task) => !selectedIds.has(task.companyId));
     const nextTimeline = timeline.filter((entry) => !selectedIds.has(entry.companyId));
+    const nextFiles = files.filter((file) => !selectedIds.has(file.accountId));
 
     setCompanies(nextCompanies);
     setContacts(nextContacts);
     setTasks(nextTasks);
     setTimeline(nextTimeline);
+    setFiles(nextFiles);
     setSelectedBulkProspectIds([]);
 
     if (selectedCompanyId && selectedIds.has(selectedCompanyId)) {
@@ -1192,7 +1457,8 @@ export default function Home() {
       contacts: nextContacts,
       tasks: nextTasks,
       timeline: nextTimeline,
-      carriers: carrierItems
+      carriers: carrierItems,
+      files: nextFiles
     });
 
     void deleteSupabaseCompanies(companyIdsToDelete).catch((error) => {
@@ -1299,7 +1565,8 @@ export default function Home() {
                   type="button"
                   onClick={() => {
                     setShowNewMenu(false);
-                    openView("prospects");
+                    setShowManualActionForm(true);
+                    setShowProspectForm(false);
                   }}
                 >
                   Action
@@ -1345,6 +1612,61 @@ export default function Home() {
             Add {quickCreateType === "carrier" ? "Carrier" : statusLabel(quickCreateType)}
           </button>
           <button type="button" className="ghost" onClick={() => setShowProspectForm(false)}>
+            Cancel
+          </button>
+        </section>
+      ) : null}
+
+      {showManualActionForm ? (
+        <section className="prospect-form manual-action-form" aria-label="Add Action">
+          <input
+            autoFocus
+            value={manualActionTitle}
+            onChange={(event) => setManualActionTitle(event.target.value)}
+            placeholder="Action Name"
+          />
+          <select
+            value={manualActionEntityId}
+            onChange={(event) => setManualActionEntityId(event.target.value)}
+            aria-label="Company or carrier"
+          >
+            <option value="">Company/Carrier</option>
+            {visibleCompanies.map((company) => (
+              <option key={company.id} value={company.id}>
+                {company.name}
+              </option>
+            ))}
+            {carrierItems.map((carrier) => (
+              <option key={carrier.id} value={carrier.id}>
+                {carrier.name} (Carrier)
+              </option>
+            ))}
+          </select>
+          <input value={manualActionOwner} onChange={(event) => setManualActionOwner(event.target.value)} placeholder="Owner" />
+          <input
+            value={manualActionDueDate}
+            onChange={(event) => setManualActionDueDate(event.target.value)}
+            placeholder="Due Date"
+          />
+          <input
+            value={manualActionDueTime}
+            onChange={(event) => setManualActionDueTime(event.target.value)}
+            placeholder="Due Time optional"
+          />
+          <select
+            value={manualActionPriority}
+            onChange={(event) => setManualActionPriority(event.target.value as Task["priority"])}
+            aria-label="Priority"
+          >
+            <option value="low">Low</option>
+            <option value="normal">Normal</option>
+            <option value="high">High</option>
+            <option value="critical">Critical</option>
+          </select>
+          <button type="button" onClick={addGlobalManualAction}>
+            Save Action
+          </button>
+          <button type="button" className="ghost" onClick={() => setShowManualActionForm(false)}>
             Cancel
           </button>
         </section>
@@ -1468,9 +1790,14 @@ export default function Home() {
             company={selectedCompany}
             contacts={companyContacts}
             canManageAccount={isAdmin}
+            files={files.filter((file) => file.accountId === selectedCompany.id)}
+            fileCabinetError={fileCabinetError}
             onAddManualContact={(values) => addManualContact(selectedCompany, values)}
             onAddManualTask={(values) => addManualTask(selectedCompany, values)}
+            onConvertToCustomer={() => convertProspectToCustomer(selectedCompany)}
             onDeleteCompany={() => deleteCompany(selectedCompany)}
+            onUpdateCompany={(values) => updateCompanyProfile(selectedCompany, values)}
+            onUploadFile={(file) => void uploadAccountFile(selectedCompany.id, "company", file)}
             onSmartNotesChange={(smartNotes) => {
               setCompanies((currentCompanies) => {
                 const nextCompanies = currentCompanies.map((company) =>
@@ -1525,7 +1852,11 @@ export default function Home() {
               }, result.tasks.length ? "adding note and generating task" : "adding note");
               setNoteResult({
                 contacts: result.contactsAdded,
-                tasks: result.tasks.map((task) => ({ title: task.title, owner: task.owner }))
+                tasks: result.tasks.map((task) => ({ title: task.title, owner: task.owner })),
+                systemUpdates: [
+                  "Timeline updated",
+                  ...result.contactsAdded.map((contactName) => `Contact Added: ${contactName}`)
+                ]
               });
               window.setTimeout(() => setNoteResult(null), 5000);
             }}
@@ -1540,6 +1871,8 @@ export default function Home() {
         <>
           <CarrierProfile
             carrier={selectedCarrier}
+            files={files.filter((file) => file.accountId === selectedCarrier.id)}
+            fileCabinetError={fileCabinetError}
             note={carrierNote}
             noteResult={noteResult}
             tasks={selectedCarrierTasks}
@@ -1564,11 +1897,13 @@ export default function Home() {
               }, result.tasks.length ? "adding carrier note and generating task" : "adding carrier note");
               setNoteResult({
                 contacts: [],
-                tasks: result.tasks.map((task) => ({ title: task.title, owner: task.owner }))
+                tasks: result.tasks.map((task) => ({ title: task.title, owner: task.owner })),
+                systemUpdates: result.tasks.length ? ["Carrier actions updated"] : ["Carrier note saved"]
               });
               window.setTimeout(() => setNoteResult(null), 5000);
             }}
             onNoteChange={setCarrierNote}
+            onUploadFile={(file) => void uploadAccountFile(selectedCarrier.id, "carrier", file)}
           />
         </>
       ) : null}
@@ -1813,18 +2148,24 @@ function CarrierListPage({ carriers, onSelect }: { carriers: Carrier[]; onSelect
 
 function CarrierProfile({
   carrier,
+  files,
+  fileCabinetError,
   note,
   noteResult,
   tasks,
   onAddNote,
-  onNoteChange
+  onNoteChange,
+  onUploadFile
 }: {
   carrier: Carrier;
+  files: AccountFile[];
+  fileCabinetError: string;
   note: string;
   noteResult: NoteSaveResult | null;
   tasks: Task[];
   onAddNote: () => void;
   onNoteChange: (note: string) => void;
+  onUploadFile: (file: File) => void;
 }) {
   const [showCarrierDetails, setShowCarrierDetails] = useState(false);
 
@@ -1869,13 +2210,14 @@ Confirm delivery`}
               Add Note
             </button>
           </div>
-          {noteResult ? <NoteSavedMessage contacts={noteResult.contacts} tasks={noteResult.tasks} /> : null}
+          {noteResult ? <NoteSavedMessage {...noteResult} /> : null}
         </div>
 
         {showCarrierDetails ? (
           <div className="current-opportunity">
             <span>Carrier Details</span>
             <strong>{carrier.equipment}</strong>
+            <FileCabinet files={files} fileCabinetError={fileCabinetError} onUploadFile={onUploadFile} />
           </div>
         ) : null}
         <div className="timeline-stream">
@@ -1900,6 +2242,8 @@ function CompanyProfile({
   canManageAccount,
   company,
   contacts: companyContacts,
+  files,
+  fileCabinetError,
   tasks: companyTasks,
   timeline,
   noteResult,
@@ -1907,11 +2251,16 @@ function CompanyProfile({
   onAddNote,
   onAddManualContact,
   onAddManualTask,
-  onDeleteCompany
+  onConvertToCustomer,
+  onDeleteCompany,
+  onUpdateCompany,
+  onUploadFile
 }: {
   canManageAccount: boolean;
   company: Company;
   contacts: typeof seedContacts;
+  files: AccountFile[];
+  fileCabinetError: string;
   tasks: Task[];
   timeline: typeof seedTimeline;
   noteResult: NoteSaveResult | null;
@@ -1919,9 +2268,13 @@ function CompanyProfile({
   onAddNote: () => void;
   onAddManualContact: (values: ManualContactInput) => void;
   onAddManualTask: (values: ManualTaskInput) => void;
+  onConvertToCustomer: () => void;
   onDeleteCompany: () => void;
+  onUpdateCompany: (values: CompanyEditInput) => void;
+  onUploadFile: (file: File) => void;
 }) {
   const [expandedSection, setExpandedSection] = useState<ProfileTab | null>(null);
+  const [isEditingAccount, setIsEditingAccount] = useState(false);
   const primaryContact = getPrimaryContact(company, companyContacts);
   const openTasks = companyTasks.filter(isActiveTask).sort(compareTasksByDueThenCreated);
   const timelineRows = getCompanyTimelineRows(company, timeline);
@@ -1930,6 +2283,11 @@ function CompanyProfile({
 
   function toggleSection(tab: ProfileTab) {
     setExpandedSection((currentSection) => (currentSection === tab ? null : tab));
+  }
+
+  function saveAccountEdit(values: CompanyEditInput) {
+    onUpdateCompany(values);
+    setIsEditingAccount(false);
   }
 
   return (
@@ -1991,6 +2349,24 @@ function CompanyProfile({
               </dd>
             </div>
           </dl>
+          <div className="profile-actions compact-actions">
+            <button className="secondary-action" type="button" onClick={() => setIsEditingAccount((value) => !value)}>
+              {isEditingAccount ? "Close Edit" : "Edit"}
+            </button>
+            {company.status === "prospect" ? (
+              <button className="secondary-action" type="button" onClick={onConvertToCustomer}>
+                Convert to Customer
+              </button>
+            ) : null}
+          </div>
+          {isEditingAccount ? (
+            <AccountEditForm
+              company={company}
+              primaryContact={primaryContact}
+              onCancel={() => setIsEditingAccount(false)}
+              onSave={saveAccountEdit}
+            />
+          ) : null}
         </section>
 
         <section className="account-summary" aria-label="Account Summary">
@@ -2032,11 +2408,8 @@ function CompanyProfile({
 
       {expandedSection === "files" ? (
         <Panel title="Files">
-          <p className="empty">Files placeholder.</p>
+          <FileCabinet files={files} fileCabinetError={fileCabinetError} onUploadFile={onUploadFile} />
           <div className="profile-actions">
-            <button className="files-button" type="button">
-              Files
-            </button>
             {canManageAccount ? (
               <button className="delete-button" type="button" onClick={onDeleteCompany}>
                 Delete Account
@@ -2054,6 +2427,122 @@ function CompanyProfile({
         onAddNote={onAddNote}
       />
     </section>
+  );
+}
+
+function AccountEditForm({
+  company,
+  primaryContact,
+  onCancel,
+  onSave
+}: {
+  company: Company;
+  primaryContact: Contact | null;
+  onCancel: () => void;
+  onSave: (values: CompanyEditInput) => void;
+}) {
+  const [name, setName] = useState(company.name);
+  const [status, setStatus] = useState<CompanyStatus>(company.status);
+  const [address, setAddress] = useState(getCompanyAddress(company));
+  const [city, setCity] = useState(company.city);
+  const [state, setState] = useState(company.state);
+  const [zip, setZip] = useState(getCompanyZip(company));
+  const [phone, setPhone] = useState(primaryContact?.phone ?? "");
+  const [website, setWebsite] = useState(getCompanyWebsite(company));
+  const [primaryContactName, setPrimaryContactName] = useState(primaryContact?.name ?? "");
+  const [lastContact, setLastContact] = useState(company.lastContact || primaryContact?.lastContact || "");
+
+  return (
+    <div className="manual-form account-edit-form" aria-label="Edit account">
+      <input value={name} onChange={(event) => setName(event.target.value)} placeholder="Company Name" />
+      <select value={status} onChange={(event) => setStatus(event.target.value as CompanyStatus)} aria-label="Status">
+        <option value="prospect">Prospect</option>
+        <option value="customer">Customer</option>
+      </select>
+      <input value={address} onChange={(event) => setAddress(event.target.value)} placeholder="Address" />
+      <input value={city} onChange={(event) => setCity(event.target.value)} placeholder="City" />
+      <input value={state} onChange={(event) => setState(event.target.value)} placeholder="State" />
+      <input value={zip} onChange={(event) => setZip(event.target.value)} placeholder="Zip" />
+      <input value={phone} onChange={(event) => setPhone(event.target.value)} placeholder="Phone" />
+      <input value={website} onChange={(event) => setWebsite(event.target.value)} placeholder="Website" />
+      <input
+        value={primaryContactName}
+        onChange={(event) => setPrimaryContactName(event.target.value)}
+        placeholder="Primary Contact"
+      />
+      <input value={lastContact} onChange={(event) => setLastContact(event.target.value)} placeholder="Last Contact" />
+      <button
+        type="button"
+        onClick={() =>
+          onSave({
+            name,
+            status,
+            address,
+            city,
+            state,
+            zip,
+            phone,
+            website,
+            primaryContact: primaryContactName,
+            lastContact
+          })
+        }
+      >
+        Save
+      </button>
+      <button className="ghost" type="button" onClick={onCancel}>
+        Cancel
+      </button>
+    </div>
+  );
+}
+
+function FileCabinet({
+  files,
+  fileCabinetError,
+  onUploadFile
+}: {
+  files: AccountFile[];
+  fileCabinetError: string;
+  onUploadFile: (file: File) => void;
+}) {
+  const inputRef = useRef<HTMLInputElement | null>(null);
+
+  return (
+    <div className="file-cabinet" aria-label="File Cabinet">
+      <div className="profile-section-heading">
+        <span>{files.length} file{files.length === 1 ? "" : "s"}</span>
+        <button className="secondary-action" type="button" onClick={() => inputRef.current?.click()}>
+          Upload File
+        </button>
+      </div>
+      <input
+        ref={inputRef}
+        type="file"
+        hidden
+        onChange={(event) => {
+          const file = event.target.files?.[0];
+
+          if (file) {
+            onUploadFile(file);
+            event.target.value = "";
+          }
+        }}
+      />
+      {fileCabinetError ? <p className="error-text">{fileCabinetError}</p> : null}
+      {files.length ? (
+        <ul className="compact-profile-list">
+          {files.map((file) => (
+            <li key={file.id}>
+              <strong>{file.name}</strong>
+              <span>{formatFileSize(file.size)} · Uploaded by {file.uploadedBy}</span>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="empty">No files uploaded.</p>
+      )}
+    </div>
   );
 }
 
@@ -2226,7 +2715,7 @@ Requested email only`}
             Add Note
           </button>
         </div>
-        {noteResult ? <NoteSavedMessage contacts={noteResult.contacts} tasks={noteResult.tasks} /> : null}
+        {noteResult ? <NoteSavedMessage {...noteResult} /> : null}
       </div>
 
       <div className="timeline-stream">
@@ -2262,16 +2751,13 @@ function Panel({ title, children }: { title: string; children: React.ReactNode }
   );
 }
 
-function NoteSavedMessage({ contacts, tasks }: NoteSaveResult) {
+function NoteSavedMessage({ tasks, systemUpdates }: NoteSaveResult) {
   return (
     <div className="note-saved" role="status">
       <strong>✓ Note Saved</strong>
-      {contacts.map((contactName) => (
-        <span key={contactName}>✓ Contact Added: {contactName}</span>
-      ))}
       {tasks.length ? (
         <>
-          <span>Actions Created:</span>
+          <span>User Actions Created</span>
           <ul>
             {tasks.map((task) => (
               <li key={`${task.title}-${task.owner}`}>
@@ -2281,7 +2767,19 @@ function NoteSavedMessage({ contacts, tasks }: NoteSaveResult) {
           </ul>
         </>
       ) : (
-        <span>{contacts.length ? "No tasks created." : "No tasks or contacts created."}</span>
+        <span>No user actions created.</span>
+      )}
+      {systemUpdates.length ? (
+        <>
+          <span>System Updates Completed</span>
+          <ul>
+            {systemUpdates.map((update) => (
+              <li key={update}>{update}</li>
+            ))}
+          </ul>
+        </>
+      ) : (
+        <span>System Updates Completed</span>
       )}
     </div>
   );
@@ -2475,12 +2973,45 @@ function parseProspectRows(rows: Array<Record<string, unknown>>): ProspectImport
       status: parseImportStatus(getImportValue(row, "Status")),
       salesLead: getImportValue(row, "Sales Lead"),
       operationsLead: getImportValue(row, "Operations Lead"),
+      address: getImportValue(row, "Address"),
+      city: getImportValue(row, "City"),
+      state: getImportValue(row, "State"),
+      zip: getImportValue(row, "Zip") || getImportValue(row, "ZIP") || getImportValue(row, "Postal Code"),
       phone: getImportValue(row, "Phone"),
       email: getImportValue(row, "Email"),
       website: getImportValue(row, "Website"),
+      contactName: getImportValue(row, "Contact Name"),
+      contactRole:
+        getImportValue(row, "Contact Title/Role") ||
+        getImportValue(row, "Contact Title") ||
+        getImportValue(row, "Contact Role") ||
+        getImportValue(row, "Role"),
+      contactPhone: getImportValue(row, "Contact Phone") || getImportValue(row, "Phone"),
+      contactEmail: getImportValue(row, "Contact Email") || getImportValue(row, "Email"),
       notes: getImportValue(row, "Notes")
     }))
     .filter((row) => row.companyName);
+}
+
+function buildImportedContact(row: ProspectImportRow, companyId: string): Contact | null {
+  const name = row.contactName.trim();
+  const phone = row.contactPhone.trim();
+  const email = row.contactEmail.trim();
+
+  if (!companyId || (!name && !phone && !email)) {
+    return null;
+  }
+
+  return {
+    id: createUuid(),
+    companyId,
+    name: name || "Imported Contact",
+    role: row.contactRole.trim() || "Imported",
+    email,
+    phone,
+    source: "Import",
+    createdBy: "Import"
+  };
 }
 
 function parseCsv(value: string) {
@@ -2879,6 +3410,18 @@ function isSystemTimelineEvent(entry: ProfileTimelineRow) {
 
 function formatTimelineTitle(title: string) {
   return title.replace(/^Task\b/, "Action");
+}
+
+function formatFileSize(size: number) {
+  if (size < 1024) {
+    return `${size} B`;
+  }
+
+  if (size < 1024 * 1024) {
+    return `${Math.round(size / 1024)} KB`;
+  }
+
+  return `${(size / 1024 / 1024).toFixed(1)} MB`;
 }
 
 function entityNameById(companies: Company[], carriers: Carrier[]) {

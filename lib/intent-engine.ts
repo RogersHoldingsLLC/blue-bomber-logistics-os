@@ -30,6 +30,7 @@ type DetectedContact = {
 
 type MatchedTaskRule = TaskIntentRule & {
   detectedDue?: string;
+  sourceSentence: string;
 };
 
 export type IntentResult = {
@@ -332,7 +333,7 @@ export function applyIntent(
   if (matchedTaskRules.length) {
     const generatedTasks = matchedTaskRules.reduce<Task[]>((uniqueTasks, taskRule) => {
       const owner = taskRule.owner === "sales" ? company.salesLead : company.operationsLead;
-      const actionName = getActionName(taskRule.taskName, note);
+      const actionName = getActionName(taskRule.taskName, taskRule.sourceSentence, taskRule.detectedDue);
       const dedupeKey = `${actionName}-${owner}-${company.id}-${note}`;
       const hasDuplicate = uniqueTasks.some(
         (task) => `${task.title}-${task.owner}-${task.companyId}-${task.sourceNote}` === dedupeKey
@@ -430,14 +431,22 @@ export function applyIntent(
   };
 }
 
-function getActionName(taskName: string, note: string) {
+function getActionName(taskName: string, note: string, detectedDue = "") {
   if (taskName !== "Call Contact" && taskName !== "Call Back") {
     return taskName;
   }
 
   const contact = extractProbableContacts(note)[0];
 
-  return contact?.name ? `Call ${contact.name}` : taskName;
+  if (contact?.name) {
+    return `Call ${contact.name}`;
+  }
+
+  if (detectedDue) {
+    return "Call Back";
+  }
+
+  return taskName === "Call Contact" ? "Call Contact" : "Call Back";
 }
 
 function splitIntentSentences(note: string) {
@@ -463,7 +472,8 @@ function findTaskRulesForSentence(sentence: string): MatchedTaskRule[] {
     )
     .map((rule) => ({
       ...rule,
-      detectedDue: extractDueFromSentence(sentence)
+      detectedDue: extractDueFromSentence(sentence),
+      sourceSentence: sentence
     }));
 }
 

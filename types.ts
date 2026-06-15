@@ -43,6 +43,17 @@ export type TimelineEntry = {
   createdAt: string;
 };
 
+export type AccountFile = {
+  id: string;
+  accountId: string;
+  accountType: "company" | "carrier";
+  name: string;
+  path: string;
+  size: number;
+  uploadedAt: string;
+  uploadedBy: string;
+};
+
 export type Company = {
   id: string;
   name: string;
