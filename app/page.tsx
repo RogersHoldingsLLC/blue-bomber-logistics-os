@@ -66,7 +66,7 @@ type AppView =
   | "prospect-profile"
   | "customer-profile"
   | "carrier-profile";
-type TaskFilter = "today" | "overdue" | "upcoming" | "all" | "completed";
+type TaskFilter = "today" | "tomorrow" | "future" | "completed";
 type AccountTab = "all" | "prospects" | "customers" | "carriers";
 type ProspectImportRow = {
   companyName: string;
@@ -83,9 +83,8 @@ const THEME_STORAGE_KEY = "blue-bomber-theme";
 
 const taskFilters: Array<{ id: TaskFilter; label: string }> = [
   { id: "today", label: "Today" },
-  { id: "overdue", label: "Overdue" },
-  { id: "upcoming", label: "Upcoming" },
-  { id: "all", label: "All" },
+  { id: "tomorrow", label: "Tomorrow" },
+  { id: "future", label: "Future" },
   { id: "completed", label: "Completed" }
 ];
 
@@ -193,8 +192,8 @@ function buildAccountSummary(
   const latestNote = timelineRows[0]?.detail;
   const nextAction = getNextAction(openTasks);
   const taskSentence = openTasks.length
-    ? `${openTasks.length} open task${openTasks.length === 1 ? "" : "s"} need attention, led by ${openTasks[0].owner} on ${openTasks[0].title}.`
-    : "There are no open tasks on this account right now.";
+    ? `${openTasks.length} open action${openTasks.length === 1 ? "" : "s"} need attention, led by ${openTasks[0].owner} on ${openTasks[0].title}.`
+    : "There are no open actions on this account right now.";
 
   return [
     `${company.name} is a ${statusLabel(company.status).toLowerCase()} account${location === "Not set" ? "" : ` in ${location}`}${company.segment ? ` for ${company.segment.toLowerCase()} work` : ""}.`,
@@ -210,7 +209,7 @@ function buildAccountSummary(
 }
 
 function getNextAction(openTasks: Task[]) {
-  return openTasks[0] ?? null;
+  return [...openTasks].sort((firstTask, secondTask) => secondTask.createdAt.localeCompare(firstTask.createdAt))[0] ?? null;
 }
 
 function getMostRecentContact(contacts: Contact[], timelineRows: ProfileTimelineRow[]) {
@@ -251,7 +250,6 @@ export default function Home() {
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [currentView, setCurrentView] = useState<AppView>("home");
   const [taskFilter, setTaskFilter] = useState<TaskFilter>("today");
-  const [taskSearch, setTaskSearch] = useState("");
   const [globalSearch, setGlobalSearch] = useState("");
   const [showTaskAdvanced, setShowTaskAdvanced] = useState(false);
   const [showProspectForm, setShowProspectForm] = useState(false);
@@ -523,22 +521,22 @@ export default function Home() {
           }
 
           if (taskFilter === "today") {
-            return true;
+            return isTaskOverdue(task) || isTaskDueToday(task);
           }
 
-          if (taskFilter === "overdue") {
-            return isTaskOverdue(task);
+          if (taskFilter === "tomorrow") {
+            return isTaskDueTomorrow(task);
           }
 
-          if (taskFilter === "upcoming") {
-            return !isTaskDueToday(task) && !isTaskOverdue(task);
+          if (taskFilter === "future") {
+            return isTaskDueAfterTomorrow(task);
           }
 
           return true;
         })
-        .filter((task) => doesTaskMatchSearch(task, taskSearchTextById, globalSearch || taskSearch))
+        .filter((task) => doesTaskMatchSearch(task, taskSearchTextById, globalSearch))
         .sort(compareTasksByDueThenCreated),
-    [carrierIds, globalSearch, taskFilter, taskSearch, taskSearchTextById, tasks, visibleCompanyIds]
+    [carrierIds, globalSearch, taskFilter, taskSearchTextById, tasks, visibleCompanyIds]
   );
   const selectedCompanyTasks = selectedCompany
     ? tasks.filter((task) => task.companyId === selectedCompany.id)
@@ -696,7 +694,7 @@ export default function Home() {
         status: "completed",
         completedAt: new Date().toISOString()
       },
-      "Task Completed",
+      "Action Completed",
       `${task.title} completed by ${currentUserName}.`
     );
   }
@@ -708,7 +706,7 @@ export default function Home() {
         due,
         status: task.status === "completed" || task.status === "cancelled" ? task.status : "open"
       },
-      "Task Snoozed",
+      "Action Snoozed",
       `${task.title} moved to ${due} by ${currentUserName}.`
     );
   }
@@ -723,13 +721,13 @@ export default function Home() {
     updateTaskLifecycle(
       task,
       { owner: nextOwner },
-      "Task Reassigned",
+      "Action Reassigned",
       `${task.title} reassigned from ${task.owner} to ${nextOwner} by ${currentUserName}.`
     );
   }
 
   function editTask(task: Task) {
-    const nextTitle = window.prompt("Task name", task.title)?.trim();
+    const nextTitle = window.prompt("Action name", task.title)?.trim();
 
     if (!nextTitle) {
       return;
@@ -749,7 +747,7 @@ export default function Home() {
         due: nextDue,
         status: nextStatus === "overdue" && !isTaskOverdue({ ...task, due: nextDue }) ? "open" : nextStatus
       },
-      "Task Edited",
+      "Action Edited",
       `${task.title} edited by ${currentUserName}.`
     );
   }
@@ -964,7 +962,7 @@ export default function Home() {
     };
     const taskTimelineEvent = createTaskTimelineEvent(
       newTask,
-      "Task Created",
+      "Action Created",
       `${newTask.title} created for ${newTask.owner} by ${currentUserName}.`
     );
     const nextTasks = [newTask, ...tasks];
@@ -1230,7 +1228,7 @@ export default function Home() {
               type="button"
               onClick={() => openView("home")}
             >
-              Today&apos;s Tasks
+              Today&apos;s Actions
             </button>
             <button
               className={currentView === "prospects" || currentView === "prospect-profile" ? "active" : ""}
@@ -1327,12 +1325,26 @@ export default function Home() {
       ) : null}
 
       {currentView === "home" ? (
-        <section className="task-centerpiece home-tasks" aria-label="TASK DASHBOARD">
+        <section className="task-centerpiece home-tasks" aria-label="Today's Actions">
           <div className="task-centerpiece-header">
             <div>
-              <h2>Command Center</h2>
+              <h2>Today&apos;s Actions</h2>
             </div>
             {showTaskAdvanced ? <span>{taskItems.length} shown · {taskCounters.open} open</span> : null}
+          </div>
+          <div className="tabs action-filter-tabs" role="tablist" aria-label="Action filter">
+            {taskFilters.map((filter) => (
+              <button
+                aria-selected={taskFilter === filter.id}
+                className={taskFilter === filter.id ? "active" : ""}
+                key={filter.id}
+                onClick={() => setTaskFilter(filter.id)}
+                role="tab"
+                type="button"
+              >
+                {filter.label}
+              </button>
+            ))}
           </div>
           <div className="task-more-row">
             <button className="secondary-action" type="button" onClick={() => setShowTaskAdvanced((value) => !value)}>
@@ -1354,7 +1366,7 @@ export default function Home() {
               </div>
               <div className="task-counters" aria-label="Task counters">
                 <div>
-                  <span>Open Tasks</span>
+                  <span>Open Actions</span>
                   <strong>{taskCounters.open}</strong>
                 </div>
                 <div>
@@ -1370,27 +1382,6 @@ export default function Home() {
                   <strong>{taskCounters.completedToday}</strong>
                 </div>
               </div>
-              <div className="tabs task-filter-tabs" role="tablist" aria-label="Task filter">
-                {taskFilters.map((filter) => (
-                  <button
-                    aria-selected={taskFilter === filter.id}
-                    className={taskFilter === filter.id ? "active" : ""}
-                    key={filter.id}
-                    onClick={() => setTaskFilter(filter.id)}
-                    role="tab"
-                    type="button"
-                  >
-                    {filter.label}
-                  </button>
-                ))}
-              </div>
-              <input
-                className="task-search"
-                value={taskSearch}
-                onChange={(event) => setTaskSearch(event.target.value)}
-                placeholder="Search tasks, company, owner"
-                type="search"
-              />
             </>
           ) : null}
           <TaskDashboard
@@ -1404,7 +1395,6 @@ export default function Home() {
             selectedTaskId={selectedTaskId}
             taskFilter={taskFilter}
             taskItems={taskItems}
-            showAdvanced={showTaskAdvanced}
           />
         </section>
       ) : null}
@@ -1483,7 +1473,7 @@ export default function Home() {
               const nextTasks = result.tasks.length ? [...result.tasks, ...tasks] : tasks;
               const taskCreatedEvents = result.tasks
                 .map((task) =>
-                  createTaskTimelineEvent(task, "Task Created", `${task.title} created for ${task.owner} by ${task.createdBy}.`)
+                  createTaskTimelineEvent(task, "Action Created", `${task.title} created for ${task.owner} by ${task.createdBy}.`)
                 )
                 .filter((entry): entry is TimelineEntry => Boolean(entry));
               const nextTimeline = [
@@ -1958,7 +1948,7 @@ function CompanyProfile({
               <dd>{company.lastContact || primaryContact?.lastContact || "Not set"}</dd>
             </div>
             <div>
-              <dt>Open Tasks</dt>
+              <dt>Open Actions</dt>
               <dd>{openTasks.length}</dd>
             </div>
             <div className="next-action-row">
@@ -1970,7 +1960,7 @@ function CompanyProfile({
                     <span>{nextAction.due || "Not set"}</span>
                   </>
                 ) : (
-                  "None"
+                  "No Action Scheduled"
                 )}
               </dd>
             </div>
@@ -2068,12 +2058,12 @@ function ProfileTasksSection({
       <div className="profile-section-heading">
         <span>{tasks.length} open</span>
         <button className="secondary-action" type="button" onClick={() => setShowForm((value) => !value)}>
-          + Task
+          + Action
         </button>
       </div>
       {showForm ? (
         <div className="manual-form" aria-label="Add manual task">
-          <input value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Task Name" />
+          <input value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Action Name" />
           <input value={owner} onChange={(event) => setOwner(event.target.value)} placeholder="Owner" />
           <input value={due} onChange={(event) => setDue(event.target.value)} placeholder="Due" />
           <select
@@ -2087,7 +2077,7 @@ function ProfileTasksSection({
             <option value="critical">Critical</option>
           </select>
           <button type="button" onClick={submitTask}>
-            Save Task
+            Save Action
           </button>
         </div>
       ) : null}
@@ -2101,7 +2091,7 @@ function ProfileTasksSection({
           ))}
         </ul>
       ) : (
-        <p className="empty">No open tasks.</p>
+        <p className="empty">No open actions.</p>
       )}
     </Panel>
   );
@@ -2225,7 +2215,7 @@ Requested email only`}
         {visibleRows.length ? (
           visibleRows.map((entry) => (
             <div className={entry.type === "task" ? "timeline-item task-event" : "timeline-item"} key={entry.id}>
-              <strong>{entry.title}</strong>
+              <strong>{formatTimelineTitle(entry.title)}</strong>
               <span>{entry.detail}</span>
             </div>
           ))
@@ -2255,7 +2245,7 @@ function NoteSavedMessage({ contacts, tasks }: NoteSaveResult) {
       ))}
       {tasks.length ? (
         <>
-          <span>Tasks Created:</span>
+          <span>Actions Created:</span>
           <ul>
             {tasks.map((task) => (
               <li key={`${task.title}-${task.owner}`}>
@@ -2571,11 +2561,11 @@ function CarrierPreview({ carriers: carrierItems }: { carriers: Carrier[] }) {
 
 function TaskDetail({ entityLabel, task }: { entityLabel: string; task: Task }) {
   return (
-    <section className="task-detail" aria-label="Task Detail">
-      <h2>Task Detail</h2>
+    <section className="task-detail" aria-label="Action Detail">
+      <h2>Action Detail</h2>
       <dl>
         <div>
-          <dt>Task Name</dt>
+          <dt>Action Name</dt>
           <dd>{task.title}</dd>
         </div>
         <div>
@@ -2587,7 +2577,7 @@ function TaskDetail({ entityLabel, task }: { entityLabel: string; task: Task }) 
           <dd>{taskStatusLabel(getTaskDisplayStatus(task))}</dd>
         </div>
         <div>
-          <dt>Due Date</dt>
+          <dt>Due</dt>
           <dd>{task.due || "Not set"}</dd>
         </div>
         <div>
@@ -2609,7 +2599,7 @@ function TaskDetail({ entityLabel, task }: { entityLabel: string; task: Task }) 
 
 function TaskCardDetail({ entityLabel, task }: { entityLabel: string; task: Task }) {
   return (
-    <dl className="task-card-detail" aria-label="Task Detail">
+    <dl className="task-card-detail" aria-label="Action Detail">
       <div>
         <dt>Assigned To</dt>
         <dd>{task.owner}</dd>
@@ -2639,7 +2629,6 @@ function TaskDashboard({
   onReassignTask,
   onSetTaskDue,
   selectedTaskId,
-  showAdvanced,
   taskFilter,
   taskItems
 }: {
@@ -2651,31 +2640,21 @@ function TaskDashboard({
   onReassignTask: (task: Task) => void;
   onSetTaskDue: (task: Task, due: string) => void;
   selectedTaskId: string | null;
-  showAdvanced: boolean;
   taskFilter: TaskFilter;
   taskItems: Task[];
 }) {
   if (!taskItems.length) {
-    return <p className="empty">No tasks here.</p>;
+    return <p className="empty">No actions here.</p>;
   }
 
-  const recentTasks = [...taskItems]
-    .sort((firstTask, secondTask) => secondTask.createdAt.localeCompare(firstTask.createdAt))
-    .slice(0, 6);
   const todaySections = [
-    { title: "Due Today", tasks: taskItems.filter((task) => isTaskDueToday(task) && !isTaskOverdue(task)) },
-    { title: "Overdue", tasks: taskItems.filter((task) => isTaskOverdue(task)) },
-    { title: "Recently Updated", tasks: recentTasks }
+    { title: "Overdue Actions", tasks: taskItems.filter((task) => isTaskOverdue(task)) },
+    { title: "Today's Actions", tasks: taskItems.filter((task) => isTaskDueToday(task) && !isTaskOverdue(task)) }
   ];
   const sections =
     taskFilter === "today"
-      ? showAdvanced
-        ? [
-            ...todaySections,
-            { title: "Upcoming", tasks: taskItems.filter((task) => !isTaskDueToday(task) && !isTaskOverdue(task)) }
-          ]
-        : todaySections
-      : [{ title: taskFilters.find((filter) => filter.id === taskFilter)?.label ?? "Tasks", tasks: taskItems }];
+      ? todaySections
+      : [{ title: `${taskFilters.find((filter) => filter.id === taskFilter)?.label ?? "Actions"} Actions`, tasks: taskItems }];
 
   return (
     <div className="task-dashboard-groups">
@@ -2733,7 +2712,6 @@ function TaskDashboardSection({
           <h4>{owner}</h4>
           <ul className="task-list">
             {ownerTasks.map((task) => {
-              const displayStatus = getTaskDisplayStatus(task);
               const isOpen = selectedTaskId === task.id;
 
               return (
@@ -2746,29 +2724,13 @@ function TaskDashboardSection({
                     <span className={task.priority === "high" ? "task-dot high" : "task-dot"} />
                     <div className="task-card-main">
                       <strong>{task.title}</strong>
-                      <span>
+                      <div className="action-card-line">
                         <button className="task-entity-link" type="button" onClick={() => onOpenEntity(task)}>
                           {entityNameById[getTaskEntityId(task)] ?? task.sourceCompany}
                         </button>
-                      </span>
-                      <dl className="task-card-meta">
-                        <div>
-                          <dt>Owner</dt>
-                          <dd>{task.owner}</dd>
-                        </div>
-                        <div>
-                          <dt>Due Date</dt>
-                          <dd>{task.due || "Not set"}</dd>
-                        </div>
-                        <div>
-                          <dt>Status</dt>
-                          <dd>
-                            <span className={displayStatus === "overdue" ? "task-status overdue" : "task-status"}>
-                              {taskStatusLabel(displayStatus)}
-                            </span>
-                          </dd>
-                        </div>
-                      </dl>
+                        <span>Owner: {task.owner}</span>
+                        <span>Due: {task.due || "Not set"}</span>
+                      </div>
                     </div>
                     <div className="task-card-actions">
                       <button type="button" onClick={() => onCompleteTask(task)}>
@@ -2829,7 +2791,7 @@ function getPageTitle(view: AppView, company: Company | null, carrier: Carrier |
     return "Carriers";
   }
 
-  return "Today's Tasks";
+  return "Today's Actions";
 }
 
 function getTaskEntityId(task: Task) {
@@ -2856,6 +2818,12 @@ function getTaskEntityLabel(task: Task, companies: Company[], carriers: Carrier[
 
 function isSystemTimelineEvent(entry: ProfileTimelineRow) {
   const systemTitles = new Set([
+    "Action Created",
+    "Action Updated",
+    "Action Completed",
+    "Action Snoozed",
+    "Action Reassigned",
+    "Action Edited",
     "Task Created",
     "Task Updated",
     "Task Completed",
@@ -2866,6 +2834,10 @@ function isSystemTimelineEvent(entry: ProfileTimelineRow) {
   ]);
 
   return entry.type === "task" || systemTitles.has(entry.title);
+}
+
+function formatTimelineTitle(title: string) {
+  return title.replace(/^Task\b/, "Action");
 }
 
 function entityNameById(companies: Company[], carriers: Carrier[]) {
@@ -2969,6 +2941,38 @@ function isTaskDueToday(task: Task) {
   dueDate.setHours(0, 0, 0, 0);
 
   return dueDate.getTime() === today.getTime();
+}
+
+function isTaskDueTomorrow(task: Task) {
+  const due = task.due.trim().toLowerCase();
+
+  if (due === "tomorrow") {
+    return true;
+  }
+
+  const dueDate = parseDueDate(task.due, task.createdAt);
+
+  if (!dueDate) {
+    return false;
+  }
+
+  const tomorrow = addDays(startOfDay(new Date()), 1);
+  dueDate.setHours(0, 0, 0, 0);
+
+  return dueDate.getTime() === tomorrow.getTime();
+}
+
+function isTaskDueAfterTomorrow(task: Task) {
+  const dueDate = parseDueDate(task.due, task.createdAt);
+
+  if (!dueDate) {
+    return true;
+  }
+
+  const tomorrow = addDays(startOfDay(new Date()), 1);
+  dueDate.setHours(0, 0, 0, 0);
+
+  return dueDate > tomorrow;
 }
 
 function isTaskOverdue(task: Task) {
