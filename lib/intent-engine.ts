@@ -28,6 +28,10 @@ type DetectedContact = {
   department: string;
 };
 
+type MatchedTaskRule = TaskIntentRule & {
+  detectedDue?: string;
+};
+
 export type IntentResult = {
   company: Company;
   contacts: Contact[];
@@ -328,7 +332,8 @@ export function applyIntent(
   if (matchedTaskRules.length) {
     const generatedTasks = matchedTaskRules.reduce<Task[]>((uniqueTasks, taskRule) => {
       const owner = taskRule.owner === "sales" ? company.salesLead : company.operationsLead;
-      const dedupeKey = `${taskRule.taskName}-${owner}-${company.id}-${note}`;
+      const actionName = getActionName(taskRule.taskName, note);
+      const dedupeKey = `${actionName}-${owner}-${company.id}-${note}`;
       const hasDuplicate = uniqueTasks.some(
         (task) => `${task.title}-${task.owner}-${task.companyId}-${task.sourceNote}` === dedupeKey
       );
@@ -344,8 +349,8 @@ export function applyIntent(
           companyId: company.id,
           entityId: company.id,
           entityType: company.status,
-          title: taskRule.taskName,
-          due: taskRule.due ?? "Next",
+          title: actionName,
+          due: taskRule.detectedDue ?? taskRule.due ?? "Next",
           priority: taskRule.priority,
           status: "open",
           createdAt: timestamp,
@@ -425,6 +430,16 @@ export function applyIntent(
   };
 }
 
+function getActionName(taskName: string, note: string) {
+  if (taskName !== "Call Contact" && taskName !== "Call Back") {
+    return taskName;
+  }
+
+  const contact = extractProbableContacts(note)[0];
+
+  return contact?.name ? `Call ${contact.name}` : taskName;
+}
+
 function splitIntentSentences(note: string) {
   return note
     .toLowerCase()
@@ -433,18 +448,48 @@ function splitIntentSentences(note: string) {
     .filter(Boolean);
 }
 
-function findTaskRulesForSentence(sentence: string) {
+function findTaskRulesForSentence(sentence: string): MatchedTaskRule[] {
   const matchedRules = taskIntentRules.filter((rule) => sentence.includes(rule.match));
 
-  return matchedRules.filter(
-    (rule) =>
-      !matchedRules.some(
-        (otherRule) =>
-          otherRule !== rule &&
-          otherRule.match.includes(rule.match) &&
-          otherRule.match.length > rule.match.length
-      )
-  );
+  return matchedRules
+    .filter(
+      (rule) =>
+        !matchedRules.some(
+          (otherRule) =>
+            otherRule !== rule &&
+            otherRule.match.includes(rule.match) &&
+            otherRule.match.length > rule.match.length
+        )
+    )
+    .map((rule) => ({
+      ...rule,
+      detectedDue: extractDueFromSentence(sentence)
+    }));
+}
+
+function extractDueFromSentence(sentence: string) {
+  const dayMatch = sentence.match(/\b(today|tomorrow|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i);
+
+  if (!dayMatch) {
+    return "";
+  }
+
+  const day = toTitleCase(dayMatch[1] ?? "");
+  const timeMatch = sentence.match(/\b(?:at\s*)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b/i);
+
+  if (!timeMatch) {
+    return day;
+  }
+
+  const hour = Number(timeMatch[1]);
+  const minute = timeMatch[2] ?? "00";
+  const meridiem = (timeMatch[3] ?? "").toUpperCase();
+
+  return `${day} ${hour}:${minute} ${meridiem}`;
+}
+
+function toTitleCase(value: string) {
+  return value.charAt(0).toUpperCase() + value.slice(1).toLowerCase();
 }
 
 function detectAndCreateContacts(
@@ -528,6 +573,7 @@ function extractProbableContacts(note: string) {
     .map((sentence) => sentence.trim())
     .filter(Boolean);
   const triggerPatterns = [
+    /\b(?:[Cc]all|[Ff]ollow up with)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)(?:\s+in\s+([A-Z][A-Za-z &/-]+))?/g,
     /\b(?:[Ss]poke with|[Tt]alked to|[Rr]eceived email from|[Ee]mail from)\s+([A-Z][a-z]+(?:\s+(?:and|&)\s+[A-Z][a-z]+)?(?:\s+[A-Z][a-z]+)?)(?:\s+in\s+([A-Z][A-Za-z &/-]+))?/g,
     /^([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)(?:\s+in\s+([A-Z][A-Za-z &/-]+))?\s+(?:said|says|told|emailed|called|asked|requested)\b/g
   ];

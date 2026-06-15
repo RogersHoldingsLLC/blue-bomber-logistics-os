@@ -239,6 +239,7 @@ export default function Home() {
   const [authInitialized, setAuthInitialized] = useState(false);
   const [appUser, setAppUser] = useState<AppUser | null>(null);
   const [showUserMenu, setShowUserMenu] = useState(false);
+  const [showNewMenu, setShowNewMenu] = useState(false);
   const [companies, setCompanies] = useState(seedCompanies);
   const [contacts, setContacts] = useState(seedContacts);
   const [tasks, setTasks] = useState(seedTasks);
@@ -501,6 +502,15 @@ export default function Home() {
       dueToday: activeTasks.filter((task) => isTaskDueToday(task)).length,
       overdue: activeTasks.filter((task) => isTaskOverdue(task)).length,
       completedToday: tasks.filter((task) => task.status === "completed" && wasTaskCompletedToday(task)).length
+    }),
+    [activeTasks, tasks]
+  );
+  const actionFilterCounts = useMemo(
+    () => ({
+      today: activeTasks.filter((task) => isTaskOverdue(task) || isTaskDueToday(task)).length,
+      tomorrow: activeTasks.filter((task) => isTaskDueTomorrow(task)).length,
+      future: activeTasks.filter((task) => isTaskDueAfterTomorrow(task)).length,
+      completed: tasks.filter((task) => task.status === "completed").length
     }),
     [activeTasks, tasks]
   );
@@ -885,6 +895,7 @@ export default function Home() {
     setQuickCreateType(type);
     setProspectName("");
     setShowProspectForm(true);
+    setShowNewMenu(false);
   }
 
   function addManualContact(company: Company, values: ManualContactInput) {
@@ -1209,7 +1220,6 @@ export default function Home() {
           <div className="brand-lockup">
             <img className="brand-logo" src="/blue-bomber-logo.png" alt="Blue Bomber Logistics" />
           </div>
-          <h1>{pageTitle}</h1>
         </div>
         <div className="topbar-actions">
           <label className="global-search" htmlFor="global-search">
@@ -1218,7 +1228,7 @@ export default function Home() {
               id="global-search"
               value={globalSearch}
               onChange={(event) => setGlobalSearch(event.target.value)}
-              placeholder="Search Companies, Contacts, Tasks..."
+              placeholder="Search Companies, Contacts, Actions..."
               type="search"
             />
           </label>
@@ -1270,16 +1280,32 @@ export default function Home() {
               Dark
             </button>
           </div>
-          <div className="quick-actions" aria-label="Quick Actions">
-            <button className="primary-action" type="button" onClick={() => openQuickCreate("prospect")}>
-              Add Prospect
+          <div className="quick-actions new-menu" aria-label="New">
+            <button className="primary-action" type="button" onClick={() => setShowNewMenu((value) => !value)}>
+              * New
             </button>
-            <button className="secondary-action" type="button" onClick={() => openQuickCreate("customer")}>
-              Add Customer
-            </button>
-            <button className="secondary-action" type="button" onClick={() => openQuickCreate("carrier")}>
-              Add Carrier
-            </button>
+            {showNewMenu ? (
+              <div className="new-menu-panel">
+                <button type="button" onClick={() => openQuickCreate("prospect")}>
+                  Prospect
+                </button>
+                <button type="button" onClick={() => openQuickCreate("customer")}>
+                  Customer
+                </button>
+                <button type="button" onClick={() => openQuickCreate("carrier")}>
+                  Carrier
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowNewMenu(false);
+                    openView("prospects");
+                  }}
+                >
+                  Action
+                </button>
+              </div>
+            ) : null}
           </div>
           <div className="user-menu">
             <button
@@ -1342,13 +1368,13 @@ export default function Home() {
                 role="tab"
                 type="button"
               >
-                {filter.label}
+                {filter.label} ({actionFilterCounts[filter.id]})
               </button>
             ))}
           </div>
           <div className="task-more-row">
             <button className="secondary-action" type="button" onClick={() => setShowTaskAdvanced((value) => !value)}>
-              {showTaskAdvanced ? "Less" : "More"}
+              {showTaskAdvanced ? "Hide Tools" : "Tools"}
             </button>
           </div>
           {showTaskAdvanced ? (
@@ -1956,7 +1982,7 @@ function CompanyProfile({
               <dd>
                 {nextAction ? (
                   <>
-                    <strong>{nextAction.title}</strong>
+                    <strong>{getActionIcon(nextAction)} {nextAction.title}</strong>
                     <span>{nextAction.due || "Not set"}</span>
                   </>
                 ) : (
@@ -2713,6 +2739,7 @@ function TaskDashboardSection({
           <ul className="task-list">
             {ownerTasks.map((task) => {
               const isOpen = selectedTaskId === task.id;
+              const entityName = entityNameById[getTaskEntityId(task)] ?? task.sourceCompany;
 
               return (
                 <li key={task.id}>
@@ -2723,13 +2750,13 @@ function TaskDashboardSection({
                   >
                     <span className={task.priority === "high" ? "task-dot high" : "task-dot"} />
                     <div className="task-card-main">
-                      <strong>{task.title}</strong>
-                      <div className="action-card-line">
+                      <div className="action-card-summary">
+                        <strong>{getActionIcon(task)} {task.title}</strong>
                         <button className="task-entity-link" type="button" onClick={() => onOpenEntity(task)}>
-                          {entityNameById[getTaskEntityId(task)] ?? task.sourceCompany}
+                          {entityName}
                         </button>
-                        <span>Owner: {task.owner}</span>
-                        <span>Due: {task.due || "Not set"}</span>
+                        <span>{task.owner}</span>
+                        <span>{task.due || "Not set"}</span>
                       </div>
                     </div>
                     <div className="task-card-actions">
@@ -2814,6 +2841,20 @@ function getTaskEntityType(task: Task, companies: Company[], carriers: Carrier[]
 
 function getTaskEntityLabel(task: Task, companies: Company[], carriers: Carrier[]) {
   return getTaskEntityType(task, companies, carriers) === "carrier" ? "Carrier" : "Company";
+}
+
+function getActionIcon(task: Task) {
+  const title = task.title.toLowerCase();
+
+  if (title.includes("email") || title.includes("quote") || title.includes("rates")) {
+    return "✉";
+  }
+
+  if (title.includes("coi") || title.includes("w9") || title.includes("noa") || title.includes("insurance")) {
+    return "✓";
+  }
+
+  return "☎";
 }
 
 function isSystemTimelineEvent(entry: ProfileTimelineRow) {
@@ -3009,25 +3050,46 @@ function wasTaskCompletedToday(task: Task) {
 function parseDueDate(value: string, createdAt?: string) {
   const normalizedValue = value.trim().toLowerCase();
   const baseDate = createdAt ? new Date(createdAt) : new Date();
+  const timeMatch = normalizedValue.match(/\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b/i);
 
-  if (normalizedValue === "today") {
-    return startOfDay(new Date());
+  if (normalizedValue.startsWith("today")) {
+    return applyDueTime(startOfDay(new Date()), timeMatch);
   }
 
-  if (normalizedValue === "tomorrow") {
-    return addDays(startOfDay(baseDate), 1);
+  if (normalizedValue.startsWith("tomorrow")) {
+    return applyDueTime(addDays(startOfDay(baseDate), 1), timeMatch);
   }
 
   if (normalizedValue === "next week") {
     return addDays(startOfDay(baseDate), 7);
   }
 
-  if (normalizedValue === "next monday" || normalizedValue === "monday") {
-    return nextWeekday(baseDate, 1);
+  if (normalizedValue.startsWith("next monday") || normalizedValue.startsWith("monday")) {
+    return applyDueTime(nextWeekday(baseDate, 1), timeMatch);
   }
 
-  if (normalizedValue === "friday") {
-    return nextWeekday(baseDate, 5);
+  if (normalizedValue.startsWith("tuesday")) {
+    return applyDueTime(nextWeekday(baseDate, 2), timeMatch);
+  }
+
+  if (normalizedValue.startsWith("wednesday")) {
+    return applyDueTime(nextWeekday(baseDate, 3), timeMatch);
+  }
+
+  if (normalizedValue.startsWith("thursday")) {
+    return applyDueTime(nextWeekday(baseDate, 4), timeMatch);
+  }
+
+  if (normalizedValue.startsWith("friday")) {
+    return applyDueTime(nextWeekday(baseDate, 5), timeMatch);
+  }
+
+  if (normalizedValue.startsWith("saturday")) {
+    return applyDueTime(nextWeekday(baseDate, 6), timeMatch);
+  }
+
+  if (normalizedValue.startsWith("sunday")) {
+    return applyDueTime(nextWeekday(baseDate, 0), timeMatch);
   }
 
   const timestamp = Date.parse(value);
@@ -3037,6 +3099,27 @@ function parseDueDate(value: string, createdAt?: string) {
   }
 
   return new Date(timestamp);
+}
+
+function applyDueTime(value: Date, match: RegExpMatchArray | null) {
+  if (!match) {
+    return value;
+  }
+
+  let hour = Number(match[1]);
+  const minute = Number(match[2] ?? "0");
+  const meridiem = (match[3] ?? "").toLowerCase();
+
+  if (meridiem === "pm" && hour < 12) {
+    hour += 12;
+  }
+
+  if (meridiem === "am" && hour === 12) {
+    hour = 0;
+  }
+
+  value.setHours(hour, minute, 0, 0);
+  return value;
 }
 
 function startOfDay(value: Date) {
