@@ -214,9 +214,9 @@ button {
 
 .brand-logo {
   display: block;
-  height: 34px;
+  height: 42px;
   object-fit: contain;
-  width: 150px;
+  width: 184px;
 }
 
 .login-logo {
@@ -997,6 +997,14 @@ button.company-preview:hover {
   border-color: var(--border-focus);
 }
 
+.task-card.owner-brian {
+  border-left: 4px solid rgba(30, 99, 255, 0.42);
+}
+
+.task-card.owner-louie {
+  border-left: 4px solid rgba(16, 138, 91, 0.42);
+}
+
 .task-entity-link {
   background: transparent;
   border: 0;
@@ -1247,7 +1255,7 @@ button.company-preview:hover {
   align-items: stretch;
   display: grid;
   gap: 14px;
-  grid-template-columns: minmax(240px, 320px) minmax(0, 1fr);
+  grid-template-columns: minmax(360px, 520px) minmax(0, 1fr);
   margin-bottom: 14px;
 }
 
@@ -1260,7 +1268,7 @@ button.company-preview:hover {
 }
 
 .account-card h2 {
-  font-size: 20px;
+  font-size: 24px;
   line-height: 1.2;
   margin: 3px 0 0;
 }
@@ -1268,6 +1276,7 @@ button.company-preview:hover {
 .account-card dl {
   display: grid;
   gap: 6px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   margin: 10px 0 0;
 }
 
@@ -1298,6 +1307,7 @@ button.company-preview:hover {
   border: 1px solid var(--border-focus);
   border-left: 4px solid var(--accent);
   border-radius: 7px;
+  grid-column: 1 / -1;
   margin-top: 2px;
   padding: 9px;
 }
@@ -1336,6 +1346,40 @@ button.company-preview:hover {
   line-height: 1.45;
 }
 
+.account-card-contacts {
+  border-top: 1px solid var(--border);
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+  padding-top: 12px;
+}
+
+.inline-contact-list {
+  display: grid;
+  gap: 6px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.inline-contact-list li {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  display: grid;
+  gap: 2px;
+  padding: 8px;
+}
+
+.inline-contact-list strong {
+  font-size: 13px;
+}
+
+.inline-contact-list span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .snapshot-label {
   color: var(--muted);
   display: block;
@@ -1355,8 +1399,43 @@ button.company-preview:hover {
 .profile-section-buttons {
   display: grid;
   gap: 8px;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   margin-bottom: 14px;
+}
+
+.manual-entry {
+  margin-bottom: 14px;
+}
+
+.manual-entry-toggle {
+  min-width: 132px;
+}
+
+.manual-entry-panel {
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  display: grid;
+  gap: 12px;
+  margin-top: 10px;
+  padding: 12px;
+}
+
+.manual-entry-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.manual-entry-options button {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 800;
+  min-height: 32px;
+  padding: 0 10px;
 }
 
 .profile-section-buttons button {

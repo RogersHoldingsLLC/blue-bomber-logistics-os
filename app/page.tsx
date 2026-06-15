@@ -33,7 +33,7 @@ type AppUser = {
   name: string;
   role: AppRole;
 };
-type ProfileTab = "tasks" | "contacts" | "freight" | "files";
+type ProfileTab = "tasks" | "files";
 type QuickCreateType = "prospect" | "customer" | "carrier";
 type ManualContactInput = {
   name: string;
@@ -112,8 +112,6 @@ const taskFilters: Array<{ id: TaskFilter; label: string }> = [
 
 const profileTabs: Array<{ id: ProfileTab; label: string }> = [
   { id: "tasks", label: "Tasks" },
-  { id: "contacts", label: "Contacts" },
-  { id: "freight", label: "Freight Op" },
   { id: "files", label: "Files" }
 ];
 
@@ -185,6 +183,14 @@ function getCompanyZip(company: Company) {
   return getSmartNoteField(company, "zip");
 }
 
+function getCompanyEquipment(company: Company) {
+  return getSmartNoteField(company, "equipment") || company.segment;
+}
+
+function getCompanyLanes(company: Company) {
+  return getSmartNoteField(company, "lanes");
+}
+
 function getSmartNoteField(company: Company, fieldName: string) {
   const fieldLine = company.smartNotes
     .split("\n")
@@ -230,6 +236,8 @@ function buildAccountSummary(
   const mostRecentContact = getMostRecentContact(contacts, timelineRows);
   const latestNote = timelineRows[0]?.detail;
   const nextAction = getNextAction(openTasks);
+  const equipment = getCompanyEquipment(company);
+  const lanes = getCompanyLanes(company);
   const taskSentence = openTasks.length
     ? `${openTasks.length} open action${openTasks.length === 1 ? "" : "s"} need attention, led by ${openTasks[0].owner} on ${openTasks[0].title}.`
     : "There are no open actions on this account right now.";
@@ -237,13 +245,14 @@ function buildAccountSummary(
   return [
     `${company.name} is a ${statusLabel(company.status).toLowerCase()} account${location === "Not set" ? "" : ` in ${location}`}${company.segment ? ` for ${company.segment.toLowerCase()} work` : ""}.`,
     nextAction ? `Next action: ${nextAction.title}${nextAction.due ? `, ${nextAction.due}` : ""}.` : "",
+    `Freight opportunity: ${company.currentOpportunity || "Not set yet."}${equipment ? ` Equipment: ${equipment}.` : ""}${lanes ? ` Lanes: ${lanes}.` : ""}`,
     mostRecentContact
       ? `Most recent contact: ${mostRecentContact}.`
       : primaryContact
       ? `${primaryContact.name}${primaryContact.role ? ` handles ${primaryContact.role.toLowerCase()}` : " is the primary contact"}${primaryContact.phone ? ` and can be reached at ${primaryContact.phone}` : ""}.`
       : "No primary contact is set yet.",
     latestNote ? `Most recent note: ${latestNote}` : `${contacts.length} contact${contacts.length === 1 ? "" : "s"} saved on the account.`,
-    `${taskSentence} Freight opportunity: ${company.currentOpportunity || "Not set yet."}`
+    taskSentence
   ].filter(Boolean).slice(0, 4);
 }
 
@@ -2274,7 +2283,8 @@ function CompanyProfile({
   onUploadFile: (file: File) => void;
 }) {
   const [expandedSection, setExpandedSection] = useState<ProfileTab | null>(null);
-  const [isEditingAccount, setIsEditingAccount] = useState(false);
+  const [isManualEntryOpen, setIsManualEntryOpen] = useState(false);
+  const [manualPanel, setManualPanel] = useState<"edit" | "contact" | "action" | "file" | null>(null);
   const primaryContact = getPrimaryContact(company, companyContacts);
   const openTasks = companyTasks.filter(isActiveTask).sort(compareTasksByDueThenCreated);
   const timelineRows = getCompanyTimelineRows(company, timeline);
@@ -2287,7 +2297,7 @@ function CompanyProfile({
 
   function saveAccountEdit(values: CompanyEditInput) {
     onUpdateCompany(values);
-    setIsEditingAccount(false);
+    setManualPanel(null);
   }
 
   return (
@@ -2349,24 +2359,24 @@ function CompanyProfile({
               </dd>
             </div>
           </dl>
-          <div className="profile-actions compact-actions">
-            <button className="secondary-action" type="button" onClick={() => setIsEditingAccount((value) => !value)}>
-              {isEditingAccount ? "Close Edit" : "Edit"}
-            </button>
-            {company.status === "prospect" ? (
-              <button className="secondary-action" type="button" onClick={onConvertToCustomer}>
-                Convert to Customer
-              </button>
-            ) : null}
+          <div className="account-card-contacts">
+            <div className="profile-section-heading">
+              <span>Contacts</span>
+              <strong>{companyContacts.length}</strong>
+            </div>
+            {companyContacts.length ? (
+              <ul className="inline-contact-list">
+                {companyContacts.map((contact) => (
+                  <li key={contact.id}>
+                    <strong>{contact.name}</strong>
+                    <span>{[contact.role, contact.phone, contact.email].filter(Boolean).join(" · ") || "No details yet"}</span>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="empty">No contacts saved.</p>
+            )}
           </div>
-          {isEditingAccount ? (
-            <AccountEditForm
-              company={company}
-              primaryContact={primaryContact}
-              onCancel={() => setIsEditingAccount(false)}
-              onSave={saveAccountEdit}
-            />
-          ) : null}
         </section>
 
         <section className="account-summary" aria-label="Account Summary">
@@ -2375,6 +2385,59 @@ function CompanyProfile({
             <p key={sentence}>{sentence}</p>
           ))}
         </section>
+      </div>
+
+      <div className="manual-entry">
+        <button
+          className="secondary-action manual-entry-toggle"
+          type="button"
+          onClick={() => {
+            setIsManualEntryOpen((value) => !value);
+            setManualPanel(null);
+          }}
+        >
+          Manual Entry
+        </button>
+        {isManualEntryOpen ? (
+          <div className="manual-entry-panel">
+            <div className="manual-entry-options">
+              <button type="button" onClick={() => setManualPanel(manualPanel === "edit" ? null : "edit")}>
+                Edit Company Info
+              </button>
+              <button type="button" onClick={() => setManualPanel(manualPanel === "contact" ? null : "contact")}>
+                Add Contact
+              </button>
+              <button type="button" onClick={() => setManualPanel(manualPanel === "action" ? null : "action")}>
+                Add Action
+              </button>
+              <button type="button" onClick={() => setManualPanel(manualPanel === "file" ? null : "file")}>
+                Add File
+              </button>
+              {company.status === "prospect" ? (
+                <button type="button" onClick={onConvertToCustomer}>
+                  Convert Prospect to Customer
+                </button>
+              ) : null}
+            </div>
+            {manualPanel === "edit" ? (
+              <AccountEditForm
+                company={company}
+                primaryContact={primaryContact}
+                onCancel={() => setManualPanel(null)}
+                onSave={saveAccountEdit}
+              />
+            ) : null}
+            {manualPanel === "contact" ? (
+              <ProfileContactsSection contacts={companyContacts} onAddManualContact={onAddManualContact} />
+            ) : null}
+            {manualPanel === "action" ? (
+              <ProfileTasksSection tasks={openTasks} onAddManualTask={onAddManualTask} />
+            ) : null}
+            {manualPanel === "file" ? (
+              <FileCabinet files={files} fileCabinetError={fileCabinetError} onUploadFile={onUploadFile} />
+            ) : null}
+          </div>
+        ) : null}
       </div>
 
       <div className="profile-section-buttons" role="tablist" aria-label="Account sections">
@@ -2394,16 +2457,6 @@ function CompanyProfile({
 
       {expandedSection === "tasks" ? (
         <ProfileTasksSection tasks={openTasks} onAddManualTask={onAddManualTask} />
-      ) : null}
-
-      {expandedSection === "contacts" ? (
-        <ProfileContactsSection contacts={companyContacts} onAddManualContact={onAddManualContact} />
-      ) : null}
-
-      {expandedSection === "freight" ? (
-        <Panel title="Freight Op">
-          <p>{company.currentOpportunity}</p>
-        </Panel>
       ) : null}
 
       {expandedSection === "files" ? (
@@ -2698,17 +2751,7 @@ function CommandTimeline({
         <textarea
           value={company.smartNotes}
           onChange={(event) => onSmartNotesChange(event.target.value)}
-          placeholder={`Talked to Aaron today
-
-Need better number
-
-Need new POC
-
-Call back Wednesday
-
-53ft dry vans only
-
-Requested email only`}
+          placeholder={"What's goin' on Jerry?"}
         />
         <div className="note-actions">
           <button type="button" onClick={onAddNote}>
@@ -2757,7 +2800,7 @@ function NoteSavedMessage({ tasks, systemUpdates }: NoteSaveResult) {
       <strong>✓ Note Saved</strong>
       {tasks.length ? (
         <>
-          <span>User Actions Created</span>
+          <span>User Actions Created:</span>
           <ul>
             {tasks.map((task) => (
               <li key={`${task.title}-${task.owner}`}>
@@ -2771,7 +2814,7 @@ function NoteSavedMessage({ tasks, systemUpdates }: NoteSaveResult) {
       )}
       {systemUpdates.length ? (
         <>
-          <span>System Updates Completed</span>
+          <span>System Updates:</span>
           <ul>
             {systemUpdates.map((update) => (
               <li key={update}>{update}</li>
@@ -2779,7 +2822,7 @@ function NoteSavedMessage({ tasks, systemUpdates }: NoteSaveResult) {
           </ul>
         </>
       ) : (
-        <span>System Updates Completed</span>
+        <span>System Updates:</span>
       )}
     </div>
   );
@@ -3275,7 +3318,11 @@ function TaskDashboardSection({
               return (
                 <li key={task.id}>
                   <article
-                    className={isOpen ? "task-card selected" : "task-card"}
+                    className={[
+                      "task-card",
+                      getOwnerClassName(task.owner),
+                      isOpen ? "selected" : ""
+                    ].filter(Boolean).join(" ")}
                     onDoubleClick={() => onOpenTaskDetail(task)}
                     title="Double-click to expand"
                   >
@@ -3386,6 +3433,20 @@ function getActionIcon(task: Task) {
   }
 
   return "☎";
+}
+
+function getOwnerClassName(owner: string) {
+  const normalizedOwner = owner.trim().toLowerCase();
+
+  if (normalizedOwner === "brian") {
+    return "owner-brian";
+  }
+
+  if (normalizedOwner === "louie") {
+    return "owner-louie";
+  }
+
+  return "";
 }
 
 function isSystemTimelineEvent(entry: ProfileTimelineRow) {
