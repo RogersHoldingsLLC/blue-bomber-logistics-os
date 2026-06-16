@@ -1377,6 +1377,12 @@ button.company-preview:hover {
   gap: 6px;
 }
 
+.profile-side-column {
+  align-self: start;
+  display: grid;
+  gap: 12px;
+}
+
 .account-summary h3 {
   font-size: 13px;
   letter-spacing: 0;
@@ -1384,11 +1390,56 @@ button.company-preview:hover {
   text-transform: uppercase;
 }
 
-.account-summary p {
+.account-summary-list {
+  display: grid;
+  gap: 5px;
+  margin: 0;
+  padding-left: 18px;
+}
+
+.account-summary-list li {
   color: var(--muted);
   font-size: 14px;
   line-height: 1.35;
+}
+
+.louie-questions-card {
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+}
+
+.louie-questions-card h3 {
+  font-size: 13px;
   margin: 0;
+  text-transform: uppercase;
+}
+
+.louie-question-list {
+  display: grid;
+  gap: 8px;
+}
+
+.louie-question-row {
+  align-items: start;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: minmax(130px, 0.55fr) minmax(0, 1fr);
+}
+
+.louie-question-row span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.3;
+}
+
+.louie-question-row textarea {
+  min-height: 38px;
+  resize: vertical;
 }
 
 .account-card-contacts {
@@ -1423,8 +1474,24 @@ button.company-preview:hover {
 }
 
 .inline-contact-list strong {
+  align-items: center;
+  display: flex;
   font-size: 14px;
+  gap: 7px;
+  justify-content: space-between;
   line-height: 1.25;
+}
+
+.primary-contact-badge {
+  background: var(--accent-soft);
+  border: 1px solid var(--border-focus);
+  border-radius: 999px;
+  color: var(--accent);
+  flex: 0 0 auto;
+  font-size: 10px;
+  font-weight: 900;
+  padding: 2px 6px;
+  text-transform: uppercase;
 }
 
 .inline-contact-list span {
@@ -2103,7 +2170,8 @@ textarea {
   }
 
   .profile-section-buttons,
-  .manual-form {
+  .manual-form,
+  .louie-question-row {
     grid-template-columns: 1fr;
   }
 

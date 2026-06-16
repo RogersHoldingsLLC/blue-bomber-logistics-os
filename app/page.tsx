@@ -158,6 +158,14 @@ const profileTabs: Array<{ id: ProfileTab; label: string }> = [
   { id: "tasks", label: "Tasks" }
 ];
 
+const louieQuestions = [
+  "What do they ship?",
+  "Where do they ship?",
+  "How often do they ship?",
+  "Who handles freight decisions?",
+  "What is the next opportunity?"
+];
+
 function mapSupabaseUser(user: User): AppUser {
   const metadataName = [user.user_metadata?.name, user.user_metadata?.full_name]
     .filter(Boolean)
@@ -285,27 +293,22 @@ function buildAccountSummary(
 ) {
   const location = formatLocation(company);
   const primaryContact = getPrimaryContact(company, contacts);
-  const mostRecentContact = getMostRecentContact(contacts, timelineRows);
   const latestNote = timelineRows[0]?.detail;
   const nextAction = getNextAction(openTasks);
   const equipment = getCompanyEquipment(company);
   const lanes = getCompanyLanes(company);
-  const taskSentence = openTasks.length
-    ? `${openTasks.length} open action${openTasks.length === 1 ? "" : "s"} need attention, led by ${openTasks[0].owner} on ${openTasks[0].title}.`
-    : "There are no open actions on this account right now.";
 
   return [
-    `${company.name} is a ${statusLabel(company.status).toLowerCase()} account${location === "Not set" ? "" : ` in ${location}`}${company.segment ? ` for ${company.segment.toLowerCase()} work` : ""}.`,
-    nextAction ? `Next action: ${nextAction.title}${nextAction.due ? `, ${nextAction.due}` : ""}.` : "",
-    `Freight opportunity: ${company.currentOpportunity || "Not set yet."}${equipment ? ` Equipment: ${equipment}.` : ""}${lanes ? ` Lanes: ${lanes}.` : ""}`,
-    mostRecentContact
-      ? `Most recent contact: ${mostRecentContact}.`
-      : primaryContact
-      ? `${primaryContact.name}${primaryContact.role ? ` handles ${primaryContact.role.toLowerCase()}` : " is the primary contact"}${primaryContact.phone ? ` and can be reached at ${primaryContact.phone}` : ""}.`
-      : "No primary contact is set yet.",
-    latestNote ? `Most recent note: ${latestNote}` : `${contacts.length} contact${contacts.length === 1 ? "" : "s"} saved on the account.`,
-    taskSentence
-  ].filter(Boolean).slice(0, 4);
+    `${statusLabel(company.status)}${location === "Not set" ? "" : ` in ${location}`}.`,
+    primaryContact
+      ? `Primary contact: ${primaryContact.name}${primaryContact.role ? `, ${primaryContact.role}` : ""}.`
+      : "Primary contact: Not set.",
+    `Freight opportunity: ${company.currentOpportunity || "Not set"}${equipment ? ` Equipment: ${equipment}.` : "."}${lanes ? ` Lanes: ${lanes}.` : ""}`,
+    latestNote ? `Most recent note: ${latestNote}` : "Most recent note: Not set.",
+    nextAction
+      ? `Next action: ${nextAction.title}${nextAction.due ? ` ${nextAction.due}` : ""}.`
+      : "Next action: No Action Scheduled."
+  ];
 }
 
 function getNextAction(openTasks: Task[]) {
@@ -2108,6 +2111,26 @@ export default function Home() {
             onDeleteCompany={() => deleteCompany(selectedCompany)}
             onRepairContacts={() => repairImportedContacts(selectedCompany)}
             onUpdateCompany={(values) => updateCompanyProfile(selectedCompany, values)}
+            onUpdateQuestion={(question, answer) => {
+              setCompanies((currentCompanies) => {
+                const nextCompanies = currentCompanies.map((company) =>
+                  company.id === selectedCompany.id
+                    ? {
+                        ...company,
+                        qualifyingQuestions: {
+                          ...company.qualifyingQuestions,
+                          [question]: answer
+                        },
+                        lastActivity: "Today"
+                      }
+                    : company
+                );
+
+                persistState({ companies: nextCompanies }, "updating Louie's questions");
+
+                return nextCompanies;
+              });
+            }}
             onUploadFile={(file) => void uploadAccountFile(selectedCompany.id, "company", file)}
             onSmartNotesChange={(smartNotes) => {
               setCompanies((currentCompanies) => {
@@ -2799,6 +2822,7 @@ function CompanyProfile({
   onDeleteCompany,
   onRepairContacts,
   onUpdateCompany,
+  onUpdateQuestion,
   onUploadFile
 }: {
   canManageAccount: boolean;
@@ -2817,6 +2841,7 @@ function CompanyProfile({
   onDeleteCompany: () => void;
   onRepairContacts: () => void;
   onUpdateCompany: (values: CompanyEditInput) => void;
+  onUpdateQuestion: (question: string, answer: string) => void;
   onUploadFile: (file: File) => void;
 }) {
   const [expandedSection, setExpandedSection] = useState<ProfileTab | null>(null);
@@ -2827,7 +2852,10 @@ function CompanyProfile({
   const timelineRows = getCompanyTimelineRows(company, timeline);
   const accountSummary = buildAccountSummary(company, companyContacts, openTasks, timelineRows);
   const nextAction = getNextAction(openTasks);
-  const visibleContacts = companyContacts.slice(0, 3);
+  const sortedContacts = primaryContact
+    ? [primaryContact, ...companyContacts.filter((contact) => contact.id !== primaryContact.id)]
+    : companyContacts;
+  const visibleContacts = sortedContacts.slice(0, 3);
   const hiddenContactCount = Math.max(companyContacts.length - visibleContacts.length, 0);
   const hasRepairableContacts = companyContacts.some((contact) =>
     parseImportedContactParts(contact.name, contact.role).length > 1
@@ -2872,30 +2900,6 @@ function CompanyProfile({
             </dl>
           </div>
 
-          <div className="account-card-section">
-            <div className="account-card-heading">
-              <span>Primary Contact</span>
-            </div>
-            <dl className="account-field-list">
-              <div>
-                <dt>Name</dt>
-                <dd>{primaryContact?.name || "Not set"}</dd>
-              </div>
-              <div>
-                <dt>Title / Role</dt>
-                <dd>{primaryContact?.role || "Not set"}</dd>
-              </div>
-              <div>
-                <dt>Phone</dt>
-                <dd>{primaryContact?.phone || "Not set"}</dd>
-              </div>
-              <div>
-                <dt>Email</dt>
-                <dd>{primaryContact?.email || "Not set"}</dd>
-              </div>
-            </dl>
-          </div>
-
           <div className="account-card-section account-card-contacts">
             <div className="account-card-heading">
               <span>Contacts ({companyContacts.length})</span>
@@ -2910,7 +2914,12 @@ function CompanyProfile({
                 <ul className="inline-contact-list">
                   {visibleContacts.map((contact) => (
                     <li key={contact.id}>
-                      <strong>{contact.name || "Not set"}</strong>
+                      <strong>
+                        {contact.name || "Not set"}
+                        {primaryContact?.id === contact.id ? (
+                          <span className="primary-contact-badge">Primary</span>
+                        ) : null}
+                      </strong>
                       <span>{contact.role || "Not set"}</span>
                       <span>
                         {contact.phone ? (
@@ -3019,12 +3028,31 @@ function CompanyProfile({
           </div>
         </section>
 
-        <section className="account-summary" aria-label="Account Summary">
-          <h3>Account Summary</h3>
-          {accountSummary.map((sentence) => (
-            <p key={sentence}>{sentence}</p>
-          ))}
-        </section>
+        <div className="profile-side-column">
+          <section className="account-summary" aria-label="Account Summary">
+            <h3>Account Summary</h3>
+            <ul className="account-summary-list">
+              {accountSummary.map((sentence) => (
+                <li key={sentence}>{sentence}</li>
+              ))}
+            </ul>
+          </section>
+
+          <section className="louie-questions-card" aria-label="Louie's Questions">
+            <h3>Louie&apos;s Questions</h3>
+            <div className="louie-question-list">
+              {louieQuestions.map((question) => (
+                <label className="louie-question-row" key={question}>
+                  <span>{question}</span>
+                  <textarea
+                    value={company.qualifyingQuestions?.[question] ?? ""}
+                    onChange={(event) => onUpdateQuestion(question, event.target.value)}
+                  />
+                </label>
+              ))}
+            </div>
+          </section>
+        </div>
       </div>
 
       <div className="profile-section-buttons" role="tablist" aria-label="Account sections">
@@ -3665,15 +3693,55 @@ function parseImportedContactRecords(contactName: string, contactRole: string, p
     : contactName.trim() || cleanPhone || cleanEmail
       ? [{ name: cleanImportedContactField(contactName) || "Imported Contact", title: cleanImportedContactField(contactRole) || "Imported" }]
       : [];
+  const phoneAssignments = assignImportedContactValue(parts, cleanPhone, "phone");
+  const emailAssignments = assignImportedContactValue(parts, cleanEmail, "email");
 
   return parts
-    .map((part) => ({
+    .map((part, index) => ({
       name: part.name,
       title: part.title || cleanImportedContactField(contactRole),
-      phone: cleanPhone,
-      email: cleanEmail
+      phone: phoneAssignments[index] ?? "",
+      email: emailAssignments[index] ?? ""
     }))
     .filter((contact) => contact.name);
+}
+
+function assignImportedContactValue(
+  parts: Array<{ name: string; title: string }>,
+  value: string,
+  type: "email" | "phone"
+) {
+  const assignments = parts.map(() => "");
+
+  if (!value || !parts.length) {
+    return assignments;
+  }
+
+  if (parts.length === 1) {
+    assignments[0] = value;
+    return assignments;
+  }
+
+  const matchedIndex =
+    type === "email" ? parts.findIndex((part) => emailLooksOwnedByContact(value, part.name)) : -1;
+  assignments[matchedIndex >= 0 ? matchedIndex : 0] = value;
+
+  return assignments;
+}
+
+function emailLooksOwnedByContact(email: string, contactName: string) {
+  const localPart = email.split("@")[0]?.toLowerCase() ?? "";
+  const nameTokens = contactName
+    .toLowerCase()
+    .split(/\s+/)
+    .map((token) => token.replace(/[^a-z]/g, ""))
+    .filter((token) => token.length > 2);
+
+  if (!localPart || !nameTokens.length) {
+    return false;
+  }
+
+  return nameTokens.some((token) => localPart.includes(token));
 }
 
 function parseImportedContactParts(contactName: string, contactRole: string) {
