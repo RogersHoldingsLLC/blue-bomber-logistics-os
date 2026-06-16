@@ -1257,7 +1257,7 @@ button.company-preview:hover {
 }
 
 .profile-top-row {
-  align-items: start;
+  align-items: stretch;
   display: grid;
   gap: 14px;
   grid-template-columns: minmax(440px, 620px) minmax(0, 1fr);
@@ -1378,9 +1378,10 @@ button.company-preview:hover {
 }
 
 .profile-side-column {
-  align-self: start;
+  align-self: stretch;
   display: grid;
   gap: 12px;
+  grid-template-rows: auto minmax(280px, 1fr);
 }
 
 .account-summary h3 {
@@ -1404,11 +1405,14 @@ button.company-preview:hover {
 }
 
 .louie-questions-card {
+  align-self: stretch;
   background: var(--surface-raised);
   border: 1px solid var(--border);
   border-radius: 8px;
   display: grid;
   gap: 10px;
+  grid-template-rows: auto 1fr;
+  min-height: 280px;
   padding: 14px;
 }
 
@@ -1438,7 +1442,7 @@ button.company-preview:hover {
 }
 
 .louie-question-row textarea {
-  min-height: 38px;
+  min-height: 56px;
   resize: vertical;
 }
 
@@ -1521,6 +1525,16 @@ button.company-preview:hover {
   justify-self: start;
   min-height: 28px;
   padding: 0 9px;
+}
+
+.contact-pager {
+  display: flex;
+  gap: 8px;
+}
+
+.contact-pager button {
+  min-height: 28px;
+  padding: 0 10px;
 }
 
 .snapshot-label {

@@ -328,10 +328,46 @@ const taskIntentRules: TaskIntentRule[] = [
     priority: "normal"
   },
   {
+    match: "need to make bol",
+    taskName: "Make BOL",
+    owner: "sales",
+    priority: "normal",
+    defaultToday: true
+  },
+  {
+    match: "make bol",
+    taskName: "Make BOL",
+    owner: "sales",
+    priority: "normal",
+    defaultToday: true
+  },
+  {
+    match: "create bol",
+    taskName: "Make BOL",
+    owner: "sales",
+    priority: "normal",
+    defaultToday: true
+  },
+  {
+    match: "send bol",
+    taskName: "Make BOL",
+    owner: "sales",
+    priority: "normal",
+    defaultToday: true
+  },
+  {
+    match: "bol for",
+    taskName: "Make BOL",
+    owner: "sales",
+    priority: "normal",
+    defaultToday: true
+  },
+  {
     match: "build bol",
-    taskName: "Generate BOL",
-    owner: "operations",
-    priority: "normal"
+    taskName: "Make BOL",
+    owner: "sales",
+    priority: "normal",
+    defaultToday: true
   },
   {
     match: "dormant prospect",
@@ -561,6 +597,10 @@ function getActionName(taskName: string, note: string, contacts: Contact[], dete
     return contact?.name ? `Follow Up With ${contact.name}` : taskName;
   }
 
+  if (taskName === "Make BOL") {
+    return contact?.name ? `Make BOL for ${contact.name}` : taskName;
+  }
+
   if (taskName !== "Call Contact" && taskName !== "Call Back") {
     return taskName;
   }
@@ -599,12 +639,17 @@ function findTaskRulesForSentence(sentence: string): MatchedTaskRule[] {
     )
     .map((rule) => ({
       ...rule,
+      priority: /\basap\b/i.test(sentence) ? "high" : rule.priority,
       detectedDue: extractDueFromSentence(sentence) || undefined,
       sourceSentence: sentence
     }));
 }
 
 function extractDueFromSentence(sentence: string) {
+  if (/\basap\b/i.test(sentence)) {
+    return "Today";
+  }
+
   if (/\bnext week\b/i.test(sentence)) {
     return "Next Week";
   }
@@ -741,6 +786,7 @@ function extractProbableContacts(note: string) {
     /\b(?:call|follow up with)\s+([a-z][a-z'’-]+(?:\s+[a-z][a-z'’-]+)?)(?:\s+in\s+([a-z][a-z &/-]+))?/gi,
     /\b(?:send rates to|send quote to|send pricing to|send update to|e-?mail quote to|need pricing for|follow up with|check with)\s+([a-z][a-z'’-]+(?:\s+[a-z][a-z'’-]+)?)(?:\s+in\s+([a-z][a-z &/-]+))?/gi,
     /\b(?:need to\s+)?(?:e-?mail|send email to)\s+([a-z][a-z'’-]+(?:\s+[a-z][a-z'’-]+)?)(?:\s+in\s+([a-z][a-z &/-]+))?/gi,
+    /\b(?:need to make|make|create|send|build)?\s*bol\s+for\s+([a-z][a-z'’-]+(?:\s+[a-z][a-z'’-]+)?)(?:\s+in\s+([a-z][a-z &/-]+))?/gi,
     /\b(?:spoke with|talked to|received email from|email from)\s+([a-z][a-z'’-]+(?:\s+(?:and|&)\s+[a-z][a-z'’-]+)?(?:\s+[a-z][a-z'’-]+)?)(?:\s+in\s+([a-z][a-z &/-]+))?/gi,
     /^([a-z][a-z'’-]+(?:\s+[a-z][a-z'’-]+)?)(?:\s+in\s+([a-z][a-z &/-]+))?\s+(?:said|says|told|emailed|called|asked|requested)\b/gi
   ];

@@ -226,6 +226,16 @@ function getCompanyWebsite(company: Company) {
   return getSmartNoteField(company, "website");
 }
 
+function formatExternalUrl(value: string) {
+  const trimmedValue = value.trim();
+
+  if (!trimmedValue) {
+    return "";
+  }
+
+  return /^https?:\/\//i.test(trimmedValue) ? trimmedValue : `https://${trimmedValue}`;
+}
+
 function getCompanyAddress(company: Company) {
   return getSmartNoteField(company, "address");
 }
@@ -2605,12 +2615,18 @@ function SmartNoteReviewModal({
   onToggleContact: (contactId: string) => void;
   onToggleTask: (taskId: string) => void;
 }) {
+  const hasDetectedUpdates = Boolean(review.newContacts.length || review.result.tasks.length);
+
   return (
     <div className="modal-backdrop" role="presentation">
       <section className="smart-note-modal" aria-label="Smart Notes Found" role="dialog" aria-modal="true">
         <div className="smart-note-modal-header">
           <h3>Smart Notes Found</h3>
-          <p>Confirm what Blue Bomber OS should save.</p>
+          <p>
+            {hasDetectedUpdates
+              ? "Confirm what Blue Bomber OS should save."
+              : "No actions detected. Save note only?"}
+          </p>
         </div>
 
         <div className="smart-note-review-section">
@@ -2658,7 +2674,7 @@ function SmartNoteReviewModal({
               ))}
             </ul>
           ) : (
-            <p>No suggested actions.</p>
+            <p>No actions detected. Save note only?</p>
           )}
         </div>
 
@@ -2672,7 +2688,7 @@ function SmartNoteReviewModal({
             Cancel
           </button>
           <button className="primary-action" type="button" onClick={onConfirm}>
-            Confirm Selected
+            {hasDetectedUpdates ? "Confirm Selected" : "Save Note"}
           </button>
         </div>
       </section>
@@ -2847,6 +2863,7 @@ function CompanyProfile({
   const [expandedSection, setExpandedSection] = useState<ProfileTab | null>(null);
   const [isManualEntryOpen, setIsManualEntryOpen] = useState(false);
   const [manualPanel, setManualPanel] = useState<"edit" | "contact" | "action" | "file" | null>(null);
+  const [contactPage, setContactPage] = useState(0);
   const primaryContact = getPrimaryContact(company, companyContacts);
   const openTasks = companyTasks.filter(isActiveTask).sort(compareTasksByDueThenCreated);
   const timelineRows = getCompanyTimelineRows(company, timeline);
@@ -2855,11 +2872,25 @@ function CompanyProfile({
   const sortedContacts = primaryContact
     ? [primaryContact, ...companyContacts.filter((contact) => contact.id !== primaryContact.id)]
     : companyContacts;
-  const visibleContacts = sortedContacts.slice(0, 3);
-  const hiddenContactCount = Math.max(companyContacts.length - visibleContacts.length, 0);
+  const contactPageSize = 3;
+  const totalContactPages = Math.max(1, Math.ceil(sortedContacts.length / contactPageSize));
+  const safeContactPage = Math.min(contactPage, totalContactPages - 1);
+  const contactStartIndex = safeContactPage * contactPageSize;
+  const contactEndIndex = Math.min(contactStartIndex + contactPageSize, sortedContacts.length);
+  const visibleContacts = sortedContacts.slice(contactStartIndex, contactEndIndex);
+  const contactRangeLabel = sortedContacts.length
+    ? `${contactStartIndex + 1}-${contactEndIndex} of ${sortedContacts.length}`
+    : "0";
+  const mainPhone = primaryContact?.phone || "";
+  const website = getCompanyWebsite(company);
+  const websiteUrl = formatExternalUrl(website);
   const hasRepairableContacts = companyContacts.some((contact) =>
     parseImportedContactParts(contact.name, contact.role).length > 1
   );
+
+  useEffect(() => {
+    setContactPage(0);
+  }, [company.id]);
 
   function toggleSection(tab: ProfileTab) {
     setExpandedSection((currentSection) => (currentSection === tab ? null : tab));
@@ -2891,18 +2922,34 @@ function CompanyProfile({
               </div>
               <div>
                 <dt>Main Phone</dt>
-                <dd>{primaryContact?.phone || "Not set"}</dd>
+                <dd>
+                  {mainPhone ? (
+                    <a className="contact-quick-link" href={`tel:${mainPhone}`}>
+                      {mainPhone}
+                    </a>
+                  ) : (
+                    "Not set"
+                  )}
+                </dd>
               </div>
               <div>
                 <dt>Website</dt>
-                <dd>{getCompanyWebsite(company) || "Not set"}</dd>
+                <dd>
+                  {websiteUrl ? (
+                    <a className="contact-quick-link" href={websiteUrl} target="_blank" rel="noreferrer">
+                      {website}
+                    </a>
+                  ) : (
+                    "Not set"
+                  )}
+                </dd>
               </div>
             </dl>
           </div>
 
           <div className="account-card-section account-card-contacts">
             <div className="account-card-heading">
-              <span>Contacts ({companyContacts.length})</span>
+              <span>Contacts ({contactRangeLabel})</span>
             </div>
             {hasRepairableContacts ? (
               <button className="secondary-action repair-contacts-action" type="button" onClick={onRepairContacts}>
@@ -2942,8 +2989,25 @@ function CompanyProfile({
                     </li>
                   ))}
                 </ul>
-                {hiddenContactCount ? (
-                  <p className="more-contacts">+ {hiddenContactCount} more contacts</p>
+                {totalContactPages > 1 ? (
+                  <div className="contact-pager" aria-label="Contact paging">
+                    <button
+                      className="secondary-action"
+                      disabled={safeContactPage === 0}
+                      type="button"
+                      onClick={() => setContactPage((page) => Math.max(0, page - 1))}
+                    >
+                      Previous
+                    </button>
+                    <button
+                      className="secondary-action"
+                      disabled={safeContactPage >= totalContactPages - 1}
+                      type="button"
+                      onClick={() => setContactPage((page) => Math.min(totalContactPages - 1, page + 1))}
+                    >
+                      Next
+                    </button>
+                  </div>
                 ) : null}
               </>
             ) : (
@@ -3038,8 +3102,8 @@ function CompanyProfile({
             </ul>
           </section>
 
-          <section className="louie-questions-card" aria-label="Louie's Questions">
-            <h3>Louie&apos;s Questions</h3>
+          <section className="louie-questions-card" aria-label="Louie's Qualifying Questions">
+            <h3>Louie&apos;s Qualifying Questions</h3>
             <div className="louie-question-list">
               {louieQuestions.map((question) => (
                 <label className="louie-question-row" key={question}>
@@ -3688,13 +3752,23 @@ function parseImportedContactRecords(contactName: string, contactRole: string, p
   const contactParts = parseImportedContactParts(contactName, contactRole);
   const cleanPhone = phone.trim();
   const cleanEmail = email.trim();
+  const extractedPhones = extractImportPhones([contactName, contactRole, cleanPhone].join(" "));
+  const extractedEmails = extractImportEmails([contactName, contactRole, cleanEmail].join(" "));
   const parts = contactParts.length
     ? contactParts
     : contactName.trim() || cleanPhone || cleanEmail
       ? [{ name: cleanImportedContactField(contactName) || "Imported Contact", title: cleanImportedContactField(contactRole) || "Imported" }]
       : [];
-  const phoneAssignments = assignImportedContactValue(parts, cleanPhone, "phone");
-  const emailAssignments = assignImportedContactValue(parts, cleanEmail, "email");
+  const phoneAssignments = assignImportedContactValues(
+    parts,
+    extractedPhones.length ? extractedPhones : cleanPhone ? [cleanPhone] : [],
+    "phone"
+  );
+  const emailAssignments = assignImportedContactValues(
+    parts,
+    extractedEmails.length ? extractedEmails : cleanEmail ? [cleanEmail] : [],
+    "email"
+  );
 
   return parts
     .map((part, index) => ({
@@ -3706,27 +3780,44 @@ function parseImportedContactRecords(contactName: string, contactRole: string, p
     .filter((contact) => contact.name);
 }
 
-function assignImportedContactValue(
+function assignImportedContactValues(
   parts: Array<{ name: string; title: string }>,
-  value: string,
+  values: string[],
   type: "email" | "phone"
 ) {
   const assignments = parts.map(() => "");
 
-  if (!value || !parts.length) {
+  if (!values.length || !parts.length) {
     return assignments;
   }
 
   if (parts.length === 1) {
-    assignments[0] = value;
+    assignments[0] = values[0] ?? "";
     return assignments;
   }
 
-  const matchedIndex =
-    type === "email" ? parts.findIndex((part) => emailLooksOwnedByContact(value, part.name)) : -1;
-  assignments[matchedIndex >= 0 ? matchedIndex : 0] = value;
+  values.forEach((value, valueIndex) => {
+    const matchedIndex =
+      type === "email" ? parts.findIndex((part) => emailLooksOwnedByContact(value, part.name)) : -1;
+    const fallbackIndex = values.length === 1 ? 0 : parts.findIndex((_, index) => !assignments[index]);
+    const assignmentIndex = matchedIndex >= 0 ? matchedIndex : fallbackIndex;
+
+    if (assignmentIndex >= 0 && !assignments[assignmentIndex]) {
+      assignments[assignmentIndex] = value;
+    } else if (valueIndex === 0 && !assignments[0]) {
+      assignments[0] = value;
+    }
+  });
 
   return assignments;
+}
+
+function extractImportEmails(value: string) {
+  return Array.from(new Set(value.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi) ?? []));
+}
+
+function extractImportPhones(value: string) {
+  return Array.from(new Set(value.match(/(?:\+?1[\s.-]?)?(?:\(?\d{3}\)?[\s.-]?)\d{3}[\s.-]?\d{4}/g) ?? []));
 }
 
 function emailLooksOwnedByContact(email: string, contactName: string) {
@@ -3845,7 +3936,12 @@ function looksLikeImportedContactName(value: string) {
 }
 
 function cleanImportedContactField(value: string) {
-  return value.replace(/\s+/g, " ").replace(/\s*[-–—]\s*$/, "").trim();
+  return value
+    .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, " ")
+    .replace(/(?:\+?1[\s.-]?)?(?:\(?\d{3}\)?[\s.-]?)\d{3}[\s.-]?\d{4}/g, " ")
+    .replace(/\s+/g, " ")
+    .replace(/\s*[-–—]\s*$/, "")
+    .trim();
 }
 
 function extractTrailingImportedName(value: string) {
@@ -4038,10 +4134,7 @@ function getImportMappedValue(row: Record<string, unknown>, mappedHeader: string
 }
 
 function getImportEmailValue(row: Record<string, unknown>, mappedHeader: string) {
-  const value = getImportMappedValue(row, mappedHeader);
-  const email = value.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i)?.[0] ?? "";
-
-  return email || value;
+  return getImportMappedValue(row, mappedHeader);
 }
 
 function getImportPhoneValue(row: Record<string, unknown>, mappedHeader: string) {
