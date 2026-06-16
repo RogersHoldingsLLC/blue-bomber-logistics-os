@@ -1538,7 +1538,8 @@ button.company-preview:hover {
 }
 
 .import-mapping-grid ul,
-.import-row-preview {
+.import-row-preview,
+.import-contact-preview {
   display: grid;
   gap: 6px;
   list-style: none;
@@ -1569,6 +1570,19 @@ button.company-preview:hover {
 
 .import-row-preview li.skipped {
   border-color: var(--attention);
+}
+
+.import-contact-preview {
+  gap: 4px;
+}
+
+.import-contact-preview li {
+  background: var(--surface-muted);
+  border: 0;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 800;
+  padding: 6px 7px;
 }
 
 .modal-backdrop {

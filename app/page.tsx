@@ -106,6 +106,12 @@ type ProspectImportRow = {
   contactRole: string;
   contactPhone: string;
   contactEmail: string;
+  contacts: Array<{
+    name: string;
+    title: string;
+    phone: string;
+    email: string;
+  }>;
   notes: string;
 };
 type ImportFieldKey =
@@ -1097,7 +1103,7 @@ export default function Home() {
           id: createUuid(),
           companyId: company.id,
           name: part.name,
-          role: part.role || original.role || "Imported",
+          role: part.title || original.role || "Imported",
           email: original.email,
           phone: original.phone,
           lastContact: original.lastContact,
@@ -2535,13 +2541,26 @@ function ImportPreviewPanel({
           {importPreview.rows.slice(0, 8).map((row) => (
             <li className={row.action === "skip" ? "skipped" : ""} key={row.rowNumber}>
               <strong>Row {row.rowNumber}: {row.row.companyName || "No company"}</strong>
-              <span>
-                {row.action === "ready"
-                  ? [row.row.address, row.row.city, row.row.state, row.row.contactName, row.row.contactEmail]
-                      .filter(Boolean)
-                      .join(" · ") || "Ready"
-                  : row.skippedReason}
-              </span>
+              {row.action === "ready" ? (
+                <>
+                  <span>{row.row.contacts.length} contact{row.row.contacts.length === 1 ? "" : "s"}</span>
+                  {row.row.contacts.length ? (
+                    <ul className="import-contact-preview">
+                      {row.row.contacts.map((contact, contactIndex) => (
+                        <li key={`${row.rowNumber}-${contact.name}-${contactIndex}`}>
+                          {contact.name} | {contact.title || "Not set"}
+                          {contact.phone ? ` | ${contact.phone}` : ""}
+                          {contact.email ? ` | ${contact.email}` : ""}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <span>No contacts detected</span>
+                  )}
+                </>
+              ) : (
+                <span>{row.skippedReason}</span>
+              )}
             </li>
           ))}
         </ul>
@@ -3591,61 +3610,93 @@ function parseProspectRows(rows: Array<Record<string, unknown>>): {
     normalizedHeaders: headers.map(normalizeImportHeader),
     fieldMapping,
     unmappedColumns,
-    rows: rows.map((row) => ({
-      companyName: getImportMappedValue(row, fieldMapping.companyName),
-      status: parseImportStatus(getImportMappedValue(row, fieldMapping.status)),
-      salesLead: getImportValueByAliases(row, ["sales lead", "sales owner"]) || "Louie",
-      operationsLead: getImportValueByAliases(row, ["operations lead", "operations owner"]) || "Brian",
-      address: getImportMappedValue(row, fieldMapping.address),
-      city: getImportMappedValue(row, fieldMapping.city),
-      state: getImportMappedValue(row, fieldMapping.state),
-      zip: getImportMappedValue(row, fieldMapping.zip),
-      phone: getImportPhoneValue(row, fieldMapping.phone),
-      email: getImportEmailValue(row, fieldMapping.contactEmail),
-      website: getImportMappedValue(row, fieldMapping.website),
-      contactName: getImportMappedValue(row, fieldMapping.contactName),
-      contactRole: getImportMappedValue(row, fieldMapping.contactRole),
-      contactPhone: getImportPhoneValue(row, fieldMapping.contactPhone || fieldMapping.phone),
-      contactEmail: getImportEmailValue(row, fieldMapping.contactEmail),
-      notes: getImportMappedValue(row, fieldMapping.notes)
-    }))
+    rows: rows.map((row) => {
+      const contactName = getImportMappedValue(row, fieldMapping.contactName);
+      const contactRole = getImportMappedValue(row, fieldMapping.contactRole);
+      const contactPhone = getImportPhoneValue(row, fieldMapping.contactPhone || fieldMapping.phone);
+      const contactEmail = getImportEmailValue(row, fieldMapping.contactEmail);
+
+      return {
+        companyName: getImportMappedValue(row, fieldMapping.companyName),
+        status: parseImportStatus(getImportMappedValue(row, fieldMapping.status)),
+        salesLead: getImportValueByAliases(row, ["sales lead", "sales owner"]) || "Louie",
+        operationsLead: getImportValueByAliases(row, ["operations lead", "operations owner"]) || "Brian",
+        address: getImportMappedValue(row, fieldMapping.address),
+        city: getImportMappedValue(row, fieldMapping.city),
+        state: getImportMappedValue(row, fieldMapping.state),
+        zip: getImportMappedValue(row, fieldMapping.zip),
+        phone: getImportPhoneValue(row, fieldMapping.phone),
+        email: contactEmail,
+        website: getImportMappedValue(row, fieldMapping.website),
+        contactName,
+        contactRole,
+        contactPhone,
+        contactEmail,
+        contacts: parseImportedContactRecords(contactName, contactRole, contactPhone, contactEmail),
+        notes: getImportMappedValue(row, fieldMapping.notes)
+      };
+    })
   };
 }
 
 function buildImportedContacts(row: ProspectImportRow, companyId: string): Contact[] {
-  const contactParts = parseImportedContactParts(row.contactName, row.contactRole);
-  const phone = row.contactPhone.trim();
-  const email = row.contactEmail.trim();
+  const parsedContacts = row.contacts.length
+    ? row.contacts
+    : parseImportedContactRecords(row.contactName, row.contactRole, row.contactPhone, row.contactEmail);
 
-  if (!companyId || (!contactParts.length && !phone && !email)) {
+  if (!companyId || !parsedContacts.length) {
     return [];
   }
 
-  const parts = contactParts.length ? contactParts : [{ name: "Imported Contact", role: row.contactRole.trim() || "Imported" }];
-
-  return parts.map((part) => ({
+  return parsedContacts.map((contact) => ({
     id: createUuid(),
     companyId,
-    name: part.name,
-    role: part.role || row.contactRole.trim() || "Imported",
-    email,
-    phone,
+    name: contact.name,
+    role: contact.title || "Imported",
+    email: contact.email,
+    phone: contact.phone,
     source: "Import",
     createdBy: "Import"
   }));
 }
 
+function parseImportedContactRecords(contactName: string, contactRole: string, phone: string, email: string) {
+  const contactParts = parseImportedContactParts(contactName, contactRole);
+  const cleanPhone = phone.trim();
+  const cleanEmail = email.trim();
+  const parts = contactParts.length
+    ? contactParts
+    : contactName.trim() || cleanPhone || cleanEmail
+      ? [{ name: cleanImportedContactField(contactName) || "Imported Contact", title: cleanImportedContactField(contactRole) || "Imported" }]
+      : [];
+
+  return parts
+    .map((part) => ({
+      name: part.name,
+      title: part.title || cleanImportedContactField(contactRole),
+      phone: cleanPhone,
+      email: cleanEmail
+    }))
+    .filter((contact) => contact.name);
+}
+
 function parseImportedContactParts(contactName: string, contactRole: string) {
-  const value = contactName.trim();
+  const value = removeContactLocationFragments(contactName.trim());
 
   if (!value) {
     return [];
   }
 
+  const repeatedPatternContacts = parseRepeatedNameTitlePattern(value);
+
+  if (repeatedPatternContacts.length) {
+    return repeatedPatternContacts;
+  }
+
   const dashParts = value.split(/\s*[-–—]\s*/).map(cleanImportedContactField).filter(Boolean);
 
   if (dashParts.length >= 2) {
-    const contactParts: Array<{ name: string; role: string }> = [];
+    const contactParts: Array<{ name: string; title: string }> = [];
     let currentName = dashParts[0];
 
     dashParts.slice(1).forEach((part, index, parts) => {
@@ -3654,7 +3705,7 @@ function parseImportedContactParts(contactName: string, contactRole: string) {
       const role = trailingName ? cleanImportedContactField(part.slice(0, trailingName.index)) : part;
 
       if (currentName) {
-        contactParts.push({ name: currentName, role });
+        contactParts.push({ name: currentName, title: role });
       }
 
       currentName = trailingName?.name ?? "";
@@ -3665,7 +3716,7 @@ function parseImportedContactParts(contactName: string, contactRole: string) {
     }
   }
 
-  const contactParts: Array<{ name: string; role: string }> = [];
+  const contactParts: Array<{ name: string; title: string }> = [];
   const nameTitlePattern =
     /([A-Z][A-Za-z'’-]+(?:\s+[A-Z][A-Za-z'’-]+)+)\s*(?:[-–—]\s*)?([\s\S]*?)(?=\s+[A-Z][A-Za-z'’-]+(?:\s+[A-Z][A-Za-z'’-]+)+\s*[-–—]|$)/g;
 
@@ -3674,7 +3725,7 @@ function parseImportedContactParts(contactName: string, contactRole: string) {
     const role = cleanImportedContactField(match[2] ?? "");
 
     if (name) {
-      contactParts.push({ name, role });
+      contactParts.push({ name, title: role });
     }
   }
 
@@ -3685,9 +3736,48 @@ function parseImportedContactParts(contactName: string, contactRole: string) {
   return [
     {
       name: cleanImportedContactField(value),
-      role: cleanImportedContactField(contactRole)
+      title: cleanImportedContactField(contactRole)
     }
   ].filter((contact) => contact.name);
+}
+
+function parseRepeatedNameTitlePattern(value: string) {
+  const cleanValue = removeContactLocationFragments(value);
+  const segments = cleanValue.split(/\s*[-–—]\s*/).map(cleanImportedContactField).filter(Boolean);
+
+  if (segments.length < 4 || segments.length % 2 !== 0) {
+    return [];
+  }
+
+  const contacts: Array<{ name: string; title: string }> = [];
+
+  for (let index = 0; index < segments.length; index += 2) {
+    const name = segments[index];
+    const title = segments[index + 1] ?? "";
+
+    if (!looksLikeImportedContactName(name)) {
+      return [];
+    }
+
+    contacts.push({ name, title });
+  }
+
+  return contacts;
+}
+
+function removeContactLocationFragments(value: string) {
+  return value
+    .replace(/\b(?:louisville|fort wayne|lexington)\s*,?\s*(?:KY|IN)\b/gi, " ")
+    .replace(/\b[A-Z][A-Za-z.'-]+(?:\s+[A-Z][A-Za-z.'-]+)?\s*,\s*(?:AL|AK|AZ|AR|CA|CO|CT|DE|FL|GA|IA|ID|IL|IN|KS|KY|LA|MA|MD|ME|MI|MN|MO|MS|MT|NC|ND|NE|NJ|NM|NV|NY|OH|OK|OR|PA|SC|SD|TN|TX|UT|VA|VT|WA|WI|WV|WY)\b/g, " ")
+    .replace(/\b(?:location|city|state|province)\s*[:/-]\s*[A-Za-z .'-]+/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function looksLikeImportedContactName(value: string) {
+  const words = value.split(/\s+/).filter(Boolean);
+
+  return words.length >= 2 && words.length <= 3 && words.every((word) => /^[A-Z][A-Za-z'’-]+$/i.test(word));
 }
 
 function cleanImportedContactField(value: string) {
