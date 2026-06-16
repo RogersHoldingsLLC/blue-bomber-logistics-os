@@ -377,7 +377,8 @@ const ignoredContactWords = new Set([
   "trucks",
   "carrier",
   "customer",
-  "prospect"
+  "prospect",
+  "at"
 ]);
 
 const carrierTaskIntentRules: CarrierTaskIntentRule[] = [
@@ -609,13 +610,13 @@ function extractDueFromSentence(sentence: string) {
   }
 
   const dayMatch = sentence.match(/\b(today|tomorrow|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i);
+  const timeMatch = sentence.match(/\b(?:at\s*)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b/i);
 
-  if (!dayMatch) {
+  if (!dayMatch && !timeMatch) {
     return "";
   }
 
-  const day = toTitleCase(dayMatch[1] ?? "");
-  const timeMatch = sentence.match(/\b(?:at\s*)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b/i);
+  const day = dayMatch ? toTitleCase(dayMatch[1] ?? "") : "Today";
 
   if (!timeMatch) {
     return day;
@@ -737,11 +738,11 @@ function extractProbableContacts(note: string) {
     .map((sentence) => sentence.trim())
     .filter(Boolean);
   const triggerPatterns = [
-    /\b(?:[Cc]all|[Ff]ollow up with)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)(?:\s+in\s+([A-Z][A-Za-z &/-]+))?/g,
-    /\b(?:[Ss]end rates to|[Ss]end quote to|[Ss]end pricing to|[Ss]end update to|[Ee]-?mail quote to|[Nn]eed pricing for|[Ff]ollow up with|[Cc]heck with)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)(?:\s+in\s+([A-Z][A-Za-z &/-]+))?/g,
-    /\b(?:[Nn]eed to\s+)?(?:[Ee]-?mail|[Ss]end email to)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)(?:\s+in\s+([A-Z][A-Za-z &/-]+))?/g,
-    /\b(?:[Ss]poke with|[Tt]alked to|[Rr]eceived email from|[Ee]mail from)\s+([A-Z][a-z]+(?:\s+(?:and|&)\s+[A-Z][a-z]+)?(?:\s+[A-Z][a-z]+)?)(?:\s+in\s+([A-Z][A-Za-z &/-]+))?/g,
-    /^([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)(?:\s+in\s+([A-Z][A-Za-z &/-]+))?\s+(?:said|says|told|emailed|called|asked|requested)\b/g
+    /\b(?:call|follow up with)\s+([a-z][a-z'’-]+(?:\s+[a-z][a-z'’-]+)?)(?:\s+in\s+([a-z][a-z &/-]+))?/gi,
+    /\b(?:send rates to|send quote to|send pricing to|send update to|e-?mail quote to|need pricing for|follow up with|check with)\s+([a-z][a-z'’-]+(?:\s+[a-z][a-z'’-]+)?)(?:\s+in\s+([a-z][a-z &/-]+))?/gi,
+    /\b(?:need to\s+)?(?:e-?mail|send email to)\s+([a-z][a-z'’-]+(?:\s+[a-z][a-z'’-]+)?)(?:\s+in\s+([a-z][a-z &/-]+))?/gi,
+    /\b(?:spoke with|talked to|received email from|email from)\s+([a-z][a-z'’-]+(?:\s+(?:and|&)\s+[a-z][a-z'’-]+)?(?:\s+[a-z][a-z'’-]+)?)(?:\s+in\s+([a-z][a-z &/-]+))?/gi,
+    /^([a-z][a-z'’-]+(?:\s+[a-z][a-z'’-]+)?)(?:\s+in\s+([a-z][a-z &/-]+))?\s+(?:said|says|told|emailed|called|asked|requested)\b/gi
   ];
 
   sentences.forEach((sentence) => {
@@ -782,6 +783,7 @@ function cleanDetectedName(value: string) {
     .split(/\s+/)
     .filter((part) => !ignoredContactWords.has(part.toLowerCase()))
     .slice(0, 2)
+    .map(toTitleCase)
     .join(" ");
 }
 
@@ -792,6 +794,7 @@ function cleanDetectedDepartment(value: string) {
     .split(/\s+/)
     .filter((part) => !ignoredContactWords.has(part.toLowerCase()))
     .slice(0, 3)
+    .map(toTitleCase)
     .join(" ");
 }
 

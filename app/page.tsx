@@ -808,14 +808,22 @@ export default function Home() {
   }
 
   function completeTask(task: Task) {
+    const completedByInput = window.prompt("Completed by: Brian or Louie", currentUserName)?.trim();
+    const completedBy = completedByInput?.toLowerCase() === "brian"
+      ? "Brian"
+      : completedByInput?.toLowerCase() === "louie"
+        ? "Louie"
+        : currentUserName;
+    const completedAt = new Date();
+
     updateTaskLifecycle(
       task,
       {
         status: "completed",
-        completedAt: new Date().toISOString()
+        completedAt: completedAt.toISOString()
       },
       "Action Completed",
-      `${task.title} completed by ${currentUserName}.`
+      `Action Completed: ${task.title}\nCompleted by ${completedBy}\n${formatDateTime(completedAt)}`
     );
   }
 
@@ -1056,6 +1064,95 @@ export default function Home() {
       contacts: nextContacts,
       timeline: nextTimeline
     }, "adding manual contact");
+  }
+
+  function repairImportedContacts(company: Company) {
+    const companyContacts = contacts.filter((contact) => contact.companyId === company.id);
+    const repairableContacts = companyContacts
+      .map((contact) => ({
+        original: contact,
+        parts: parseImportedContactParts(contact.name, contact.role)
+      }))
+      .filter(({ parts }) => parts.length > 1);
+
+    if (!repairableContacts.length) {
+      return;
+    }
+
+    if (!window.confirm("Repair imported contacts for this account?")) {
+      return;
+    }
+
+    const repairedOriginalIds = new Set(repairableContacts.map(({ original }) => original.id));
+    const existingKeys = new Set(
+      contacts
+        .filter((contact) => contact.companyId === company.id && !repairedOriginalIds.has(contact.id))
+        .map((contact) => `${normalizeCompanyName(contact.name)}:${contact.email.toLowerCase()}`)
+    );
+    const repairedContacts = repairableContacts.flatMap(({ original, parts }) =>
+      parts
+        .map((part) => ({
+          id: createUuid(),
+          companyId: company.id,
+          name: part.name,
+          role: part.role || original.role || "Imported",
+          email: original.email,
+          phone: original.phone,
+          lastContact: original.lastContact,
+          source: "Import Repair",
+          createdBy: currentUserName
+        }) satisfies Contact)
+        .filter((contact) => {
+          const key = `${normalizeCompanyName(contact.name)}:${contact.email.toLowerCase()}`;
+
+          if (existingKeys.has(key)) {
+            return false;
+          }
+
+          existingKeys.add(key);
+          return true;
+        })
+    );
+
+    if (!repairedContacts.length) {
+      return;
+    }
+
+    const nextContacts = [
+      ...repairedContacts,
+      ...contacts.filter((contact) => !repairedOriginalIds.has(contact.id))
+    ];
+    const primaryReplacement = repairedContacts[0];
+    const nextCompanies = companies.map((companyItem) =>
+      companyItem.id === company.id
+        ? {
+            ...companyItem,
+            primaryContactId: repairedOriginalIds.has(companyItem.primaryContactId)
+              ? primaryReplacement.id
+              : companyItem.primaryContactId,
+            lastActivity: "Contacts repaired"
+          }
+        : companyItem
+    );
+    const nextTimeline = [
+      {
+        id: createUuid(),
+        companyId: company.id,
+        at: "Contacts Repaired",
+        body: `Repaired ${repairedContacts.length} imported contacts.`,
+        createdAt: new Date().toISOString()
+      },
+      ...timeline
+    ];
+
+    setContacts(nextContacts);
+    setCompanies(nextCompanies);
+    setTimeline(nextTimeline);
+    persistState({
+      companies: nextCompanies,
+      contacts: nextContacts,
+      timeline: nextTimeline
+    }, "repairing imported contacts");
   }
 
   function addManualTask(company: Company, values: ManualTaskInput) {
@@ -2001,6 +2098,7 @@ export default function Home() {
             onAddManualTask={(values) => addManualTask(selectedCompany, values)}
             onConvertToCustomer={() => convertProspectToCustomer(selectedCompany)}
             onDeleteCompany={() => deleteCompany(selectedCompany)}
+            onRepairContacts={() => repairImportedContacts(selectedCompany)}
             onUpdateCompany={(values) => updateCompanyProfile(selectedCompany, values)}
             onUploadFile={(file) => void uploadAccountFile(selectedCompany.id, "company", file)}
             onSmartNotesChange={(smartNotes) => {
@@ -2672,6 +2770,7 @@ function CompanyProfile({
   onAddManualTask,
   onConvertToCustomer,
   onDeleteCompany,
+  onRepairContacts,
   onUpdateCompany,
   onUploadFile
 }: {
@@ -2689,6 +2788,7 @@ function CompanyProfile({
   onAddManualTask: (values: ManualTaskInput) => void;
   onConvertToCustomer: () => void;
   onDeleteCompany: () => void;
+  onRepairContacts: () => void;
   onUpdateCompany: (values: CompanyEditInput) => void;
   onUploadFile: (file: File) => void;
 }) {
@@ -2702,6 +2802,9 @@ function CompanyProfile({
   const nextAction = getNextAction(openTasks);
   const visibleContacts = companyContacts.slice(0, 3);
   const hiddenContactCount = Math.max(companyContacts.length - visibleContacts.length, 0);
+  const hasRepairableContacts = companyContacts.some((contact) =>
+    parseImportedContactParts(contact.name, contact.role).length > 1
+  );
 
   function toggleSection(tab: ProfileTab) {
     setExpandedSection((currentSection) => (currentSection === tab ? null : tab));
@@ -2771,6 +2874,11 @@ function CompanyProfile({
               <span>Contacts</span>
               <strong>{companyContacts.length}</strong>
             </div>
+            {hasRepairableContacts ? (
+              <button className="secondary-action repair-contacts-action" type="button" onClick={onRepairContacts}>
+                Repair Contacts
+              </button>
+            ) : null}
             {visibleContacts.length ? (
               <>
                 <ul className="inline-contact-list">
@@ -2778,8 +2886,24 @@ function CompanyProfile({
                     <li key={contact.id}>
                       <strong>{contact.name || "Not set"}</strong>
                       <span>{contact.role || "Not set"}</span>
-                      <span>{contact.phone || "Not set"}</span>
-                      <span>{contact.email || "Not set"}</span>
+                      <span>
+                        {contact.phone ? (
+                          <a className="contact-quick-link" href={`tel:${contact.phone}`} aria-label={`Call ${contact.name}`}>
+                            ☎ {contact.phone}
+                          </a>
+                        ) : (
+                          "Not set"
+                        )}
+                      </span>
+                      <span>
+                        {contact.email ? (
+                          <a className="contact-quick-link" href={`mailto:${contact.email}`} aria-label={`Email ${contact.name}`}>
+                            ✉ {contact.email}
+                          </a>
+                        ) : (
+                          "Not set"
+                        )}
+                      </span>
                     </li>
                   ))}
                 </ul>
@@ -2797,7 +2921,7 @@ function CompanyProfile({
               <span>Actions</span>
             </div>
             <dl className="account-field-list">
-              <div>
+              <div className="open-actions-row">
                 <dt>Open Actions</dt>
                 <dd>{openTasks.length}</dd>
               </div>
@@ -2806,8 +2930,9 @@ function CompanyProfile({
                 <dd>
                   {nextAction ? (
                     <>
-                      <strong>{getActionIcon(nextAction)} {nextAction.title}</strong>
+                      <strong>{nextAction.title}</strong>
                       <span>{nextAction.due || "Not set"}</span>
+                      <small>Owner: {nextAction.owner}</small>
                     </>
                   ) : (
                     "No Action Scheduled"
@@ -4049,11 +4174,18 @@ function TaskDashboardSection({
                     <div className="task-card-main">
                       <div className="action-card-summary">
                         <strong>{getActionIcon(task)} {task.title}</strong>
-                        <button className="task-entity-link" type="button" onClick={() => onOpenEntity(task)}>
+                        <button
+                          className="task-entity-link"
+                          type="button"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            onOpenEntity(task);
+                          }}
+                        >
                           {entityName}
                         </button>
                         <span>{task.owner}</span>
-                        <span>{task.due || "Not set"}</span>
+                        <span className="task-due-time">{formatTaskDue(task.due)}</span>
                       </div>
                     </div>
                     <div className="task-card-actions">
@@ -4370,6 +4502,20 @@ function wasTaskCompletedToday(task: Task) {
   return completedDate.toDateString() === today.toDateString();
 }
 
+function formatDateTime(value: Date) {
+  return value.toLocaleString("en-US", {
+    month: "2-digit",
+    day: "2-digit",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit"
+  });
+}
+
+function formatTaskDue(due: string) {
+  return due.trim() || "Not set";
+}
+
 function parseDueDate(value: string, createdAt?: string) {
   const normalizedValue = value.trim().toLowerCase();
   const baseDate = createdAt ? new Date(createdAt) : new Date();
@@ -4466,6 +4612,13 @@ function nextWeekday(value: Date, weekday: number) {
 }
 
 function compareTasksByDueThenCreated(firstTask: Task, secondTask: Task) {
+  const firstOverdue = isTaskOverdue(firstTask);
+  const secondOverdue = isTaskOverdue(secondTask);
+
+  if (firstOverdue !== secondOverdue) {
+    return firstOverdue ? -1 : 1;
+  }
+
   const firstDue = parseDueDate(firstTask.due, firstTask.createdAt)?.getTime() ?? Number.MAX_SAFE_INTEGER;
   const secondDue = parseDueDate(secondTask.due, secondTask.createdAt)?.getTime() ?? Number.MAX_SAFE_INTEGER;
 
