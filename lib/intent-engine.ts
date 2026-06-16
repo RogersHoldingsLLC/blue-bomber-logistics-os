@@ -268,6 +268,69 @@ const taskIntentRules: TaskIntentRule[] = [
     priority: "high"
   },
   {
+    match: "need to quote",
+    taskName: "Quote Load",
+    owner: "sales",
+    priority: "high",
+    defaultToday: true
+  },
+  {
+    match: "quote this load",
+    taskName: "Quote Load",
+    owner: "sales",
+    priority: "high",
+    defaultToday: true
+  },
+  {
+    match: "quote load",
+    taskName: "Quote Load",
+    owner: "sales",
+    priority: "high",
+    defaultToday: true
+  },
+  {
+    match: "rate load",
+    taskName: "Quote Load",
+    owner: "sales",
+    priority: "high",
+    defaultToday: true
+  },
+  {
+    match: "price load",
+    taskName: "Quote Load",
+    owner: "sales",
+    priority: "high",
+    defaultToday: true
+  },
+  {
+    match: "need pricing on load",
+    taskName: "Quote Load",
+    owner: "sales",
+    priority: "high",
+    defaultToday: true
+  },
+  {
+    match: "need rate from",
+    taskName: "Quote Load",
+    owner: "sales",
+    priority: "high",
+    defaultToday: true
+  },
+  {
+    match: "quote from",
+    taskName: "Quote Load",
+    owner: "sales",
+    priority: "high",
+    defaultToday: true
+  },
+  {
+    match: "load from",
+    taskName: "Quote Load",
+    owner: "sales",
+    priority: "high",
+    defaultToday: true
+  },
+  {
     match: "need pricing",
     taskName: "Provide Quote",
     owner: "sales",
@@ -601,6 +664,12 @@ function getActionName(taskName: string, note: string, contacts: Contact[], dete
     return contact?.name ? `Make BOL for ${contact.name}` : taskName;
   }
 
+  if (taskName === "Quote Load") {
+    const lane = extractLane(note);
+
+    return lane ? `Quote Load: ${lane.origin} to ${lane.destination}` : taskName;
+  }
+
   if (taskName !== "Call Contact" && taskName !== "Call Back") {
     return taskName;
   }
@@ -672,6 +741,40 @@ function extractDueFromSentence(sentence: string) {
   const meridiem = (timeMatch[3] ?? "").toUpperCase();
 
   return `${day} ${hour}:${minute} ${meridiem}`;
+}
+
+function extractLane(sentence: string) {
+  const match = sentence.match(
+    /\b(?:need\s+rate\s+from|quote\s+from|load\s+from|from)\s+(.+?)\s+to\s+(.+?)(?:\s+(?:today|tomorrow|asap|please|now|for\s+quote))?$/i
+  );
+
+  if (!match) {
+    return null;
+  }
+
+  const origin = formatLaneLocation(match[1] ?? "");
+  const destination = formatLaneLocation(match[2] ?? "");
+
+  return origin && destination ? { origin, destination } : null;
+}
+
+function formatLaneLocation(value: string) {
+  return value
+    .replace(/[.,;:]+$/g, "")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((word) => {
+      const cleanedWord = word.replace(/[^a-zA-Z]/g, "");
+
+      if (/^[a-z]{2}$/i.test(cleanedWord)) {
+        return cleanedWord.toUpperCase();
+      }
+
+      return toTitleCase(cleanedWord);
+    })
+    .filter(Boolean)
+    .join(" ");
 }
 
 function toTitleCase(value: string) {

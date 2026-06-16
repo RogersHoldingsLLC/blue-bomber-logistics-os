@@ -253,6 +253,34 @@ export async function uploadSupabaseAccountFile({
   } satisfies AccountFile;
 }
 
+export async function createSupabaseAccountFileSignedUrl(file: AccountFile, download = false) {
+  if (!supabase) {
+    throw new Error("Supabase Storage is not configured.");
+  }
+
+  const signedUrlResult = await supabase.storage.from(FILE_BUCKET).createSignedUrl(
+    file.path,
+    60 * 60,
+    download
+      ? {
+          download: file.name
+        }
+      : undefined
+  );
+
+  if (signedUrlResult.error || !signedUrlResult.data?.signedUrl) {
+    console.error(
+      "[Blue Bomber Storage] signed URL failed:",
+      signedUrlResult.error ? formatSupabaseError(signedUrlResult.error) : "No signed URL returned"
+    );
+    throw new Error("Could not open file. Check Supabase Storage read policy.");
+  }
+
+  console.log("[Blue Bomber Storage] signed URL created:", file.path);
+
+  return signedUrlResult.data.signedUrl;
+}
+
 export async function deleteSupabaseCompany(companyId: string) {
   if (!supabase) {
     return false;

@@ -18,6 +18,7 @@ import {
   deleteSupabaseCompanies,
   deleteSupabaseCompany,
   importSupabaseProspects,
+  createSupabaseAccountFileSignedUrl,
   loadSupabaseState,
   saveSupabaseState,
   uploadSupabaseAccountFile
@@ -1396,6 +1397,35 @@ export default function Home() {
     }
   }
 
+  async function openAccountFile(file: AccountFile, download = false) {
+    setFileCabinetError("");
+
+    try {
+      const signedUrl = await createSupabaseAccountFileSignedUrl(file, download);
+      const openedWindow = window.open(signedUrl, "_blank", "noopener,noreferrer");
+
+      if (!openedWindow) {
+        const link = document.createElement("a");
+        link.href = signedUrl;
+        link.target = "_blank";
+        link.rel = "noreferrer";
+
+        if (download) {
+          link.download = file.name;
+        }
+
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Could not open file. Check Supabase Storage read policy.";
+
+      setFileCabinetError(message);
+      console.error("[Blue Bomber Files] file open failed:", message);
+    }
+  }
+
   function deleteCompany(company: Company) {
     if (!window.confirm(`Delete ${company.name}? This will remove related contacts, tasks, and timeline entries.`)) {
       return;
@@ -2142,6 +2172,7 @@ export default function Home() {
               });
             }}
             onUploadFile={(file) => void uploadAccountFile(selectedCompany.id, "company", file)}
+            onOpenFile={(file, download) => void openAccountFile(file, download)}
             onSmartNotesChange={(smartNotes) => {
               setCompanies((currentCompanies) => {
                 const nextCompanies = currentCompanies.map((company) =>
@@ -2233,6 +2264,7 @@ export default function Home() {
             }}
             onNoteChange={setCarrierNote}
             onUploadFile={(file) => void uploadAccountFile(selectedCarrier.id, "carrier", file)}
+            onOpenFile={(file, download) => void openAccountFile(file, download)}
           />
         </>
       ) : null}
@@ -2617,6 +2649,34 @@ function SmartNoteReviewModal({
 }) {
   const hasDetectedUpdates = Boolean(review.newContacts.length || review.result.tasks.length);
 
+  useEffect(() => {
+    function handleSmartNoteModalKeyDown(event: KeyboardEvent) {
+      const target = event.target;
+      const isTextArea = target instanceof HTMLTextAreaElement;
+
+      if (event.key === "Escape") {
+        event.preventDefault();
+        onCancel();
+        return;
+      }
+
+      if (event.key === "Enter") {
+        if (isTextArea && event.shiftKey) {
+          return;
+        }
+
+        event.preventDefault();
+        onConfirm();
+      }
+    }
+
+    document.addEventListener("keydown", handleSmartNoteModalKeyDown);
+
+    return () => {
+      document.removeEventListener("keydown", handleSmartNoteModalKeyDown);
+    };
+  }, [onCancel, onConfirm]);
+
   return (
     <div className="modal-backdrop" role="presentation">
       <section className="smart-note-modal" aria-label="Smart Notes Found" role="dialog" aria-modal="true">
@@ -2732,7 +2792,8 @@ function CarrierProfile({
   tasks,
   onAddNote,
   onNoteChange,
-  onUploadFile
+  onUploadFile,
+  onOpenFile
 }: {
   carrier: Carrier;
   files: AccountFile[];
@@ -2743,6 +2804,7 @@ function CarrierProfile({
   onAddNote: () => void;
   onNoteChange: (note: string) => void;
   onUploadFile: (file: File) => void;
+  onOpenFile: (file: AccountFile, download?: boolean) => void;
 }) {
   const [showCarrierDetails, setShowCarrierDetails] = useState(false);
 
@@ -2800,7 +2862,12 @@ Confirm delivery`}
           <div className="current-opportunity">
             <span>Carrier Details</span>
             <strong>{carrier.equipment}</strong>
-            <FileCabinet files={files} fileCabinetError={fileCabinetError} onUploadFile={onUploadFile} />
+            <FileCabinet
+              files={files}
+              fileCabinetError={fileCabinetError}
+              onOpenFile={onOpenFile}
+              onUploadFile={onUploadFile}
+            />
           </div>
         ) : null}
         <div className="timeline-stream">
@@ -2839,7 +2906,8 @@ function CompanyProfile({
   onRepairContacts,
   onUpdateCompany,
   onUpdateQuestion,
-  onUploadFile
+  onUploadFile,
+  onOpenFile
 }: {
   canManageAccount: boolean;
   company: Company;
@@ -2859,6 +2927,7 @@ function CompanyProfile({
   onUpdateCompany: (values: CompanyEditInput) => void;
   onUpdateQuestion: (question: string, answer: string) => void;
   onUploadFile: (file: File) => void;
+  onOpenFile: (file: AccountFile, download?: boolean) => void;
 }) {
   const [expandedSection, setExpandedSection] = useState<ProfileTab | null>(null);
   const [isManualEntryOpen, setIsManualEntryOpen] = useState(false);
@@ -3085,7 +3154,12 @@ function CompanyProfile({
                   <ProfileTasksSection tasks={openTasks} onAddManualTask={onAddManualTask} />
                 ) : null}
                 {manualPanel === "file" ? (
-                  <FileCabinet files={files} fileCabinetError={fileCabinetError} onUploadFile={onUploadFile} />
+                  <FileCabinet
+                    files={files}
+                    fileCabinetError={fileCabinetError}
+                    onOpenFile={onOpenFile}
+                    onUploadFile={onUploadFile}
+                  />
                 ) : null}
               </div>
             ) : null}
@@ -3219,10 +3293,12 @@ function AccountEditForm({
 function FileCabinet({
   files,
   fileCabinetError,
+  onOpenFile,
   onUploadFile
 }: {
   files: AccountFile[];
   fileCabinetError: string;
+  onOpenFile: (file: AccountFile, download?: boolean) => void;
   onUploadFile: (file: File) => void;
 }) {
   const inputRef = useRef<HTMLInputElement | null>(null);
@@ -3250,11 +3326,26 @@ function FileCabinet({
       />
       {fileCabinetError ? <p className="error-text">{fileCabinetError}</p> : null}
       {files.length ? (
-        <ul className="compact-profile-list">
+        <ul className="compact-profile-list file-list">
           {files.map((file) => (
             <li key={file.id}>
-              <strong>{file.name}</strong>
-              <span>{formatFileSize(file.size)} · Uploaded by {file.uploadedBy}</span>
+              <div className="file-row-main">
+                <button className="file-name-button" type="button" onClick={() => onOpenFile(file)}>
+                  {file.name}
+                </button>
+                <span>
+                  {getFileExtension(file.name)} · {formatFileSize(file.size)} · Uploaded {formatFileDate(file.uploadedAt)}
+                  {file.uploadedBy ? ` by ${file.uploadedBy}` : ""}
+                </span>
+              </div>
+              <div className="file-row-actions">
+                <button className="secondary-action" type="button" onClick={() => onOpenFile(file)}>
+                  Open
+                </button>
+                <button className="ghost" type="button" onClick={() => onOpenFile(file, true)}>
+                  Download
+                </button>
+              </div>
             </li>
           ))}
         </ul>
@@ -4681,6 +4772,30 @@ function formatFileSize(size: number) {
   }
 
   return `${(size / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function getFileExtension(fileName: string) {
+  const extension = fileName.split(".").pop();
+
+  return extension && extension !== fileName ? extension.toUpperCase() : "File";
+}
+
+function formatFileDate(uploadedAt: string) {
+  if (!uploadedAt) {
+    return "date not set";
+  }
+
+  const date = new Date(uploadedAt);
+
+  if (Number.isNaN(date.getTime())) {
+    return "date not set";
+  }
+
+  return date.toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric"
+  });
 }
 
 function entityNameById(companies: Company[], carriers: Carrier[]) {
