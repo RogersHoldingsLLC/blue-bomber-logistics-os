@@ -218,6 +218,15 @@ function getCompanyZip(company: Company) {
   return getSmartNoteField(company, "zip");
 }
 
+function formatCityStateZip(company: Company) {
+  const city = company.city.trim();
+  const state = company.state.trim();
+  const zip = getCompanyZip(company).trim();
+  const cityState = [city, state].filter(Boolean).join(", ");
+
+  return [cityState, zip].filter(Boolean).join(" ");
+}
+
 function getCompanyEquipment(company: Company) {
   return getSmartNoteField(company, "equipment") || company.segment;
 }
@@ -1360,15 +1369,17 @@ export default function Home() {
 
           const duplicateCompany =
             existingCompany ?? importedCompanies.find((company) => normalizeCompanyName(company.name) === normalizedName);
-          const importedContact = buildImportedContact(row, duplicateCompany?.id ?? "");
+          const importedRowContacts = buildImportedContacts(row, duplicateCompany?.id ?? "");
 
-          if (duplicateCompany && importedContact) {
-            const contactKey = `${duplicateCompany.id}:${normalizeCompanyName(importedContact.name)}:${importedContact.email.toLowerCase()}`;
+          if (duplicateCompany) {
+            importedRowContacts.forEach((importedContact) => {
+              const contactKey = `${duplicateCompany.id}:${normalizeCompanyName(importedContact.name)}:${importedContact.email.toLowerCase()}`;
 
-            if (!contactKeys.has(contactKey)) {
-              importedContacts.push(importedContact);
-              contactKeys.add(contactKey);
-            }
+              if (!contactKeys.has(contactKey)) {
+                importedContacts.push(importedContact);
+                contactKeys.add(contactKey);
+              }
+            });
           }
 
           return;
@@ -1377,7 +1388,8 @@ export default function Home() {
         seenNames.add(normalizedName);
 
         const companyId = createUuid();
-        const importedContact = buildImportedContact(row, companyId);
+        const importedRowContacts = buildImportedContacts(row, companyId);
+        const primaryImportedContact = importedRowContacts[0] ?? null;
         const smartNotes = [
           row.notes,
           row.address ? `Address: ${row.address}` : "",
@@ -1397,7 +1409,7 @@ export default function Home() {
           smartNotes,
           salesLead: row.salesLead || "Louie",
           operationsLead: row.operationsLead || "Brian",
-          primaryContactId: importedContact ? importedContact.id : "",
+          primaryContactId: primaryImportedContact ? primaryImportedContact.id : "",
           lastContact: "",
           lastActivity: "Imported",
           active: true,
@@ -1409,10 +1421,10 @@ export default function Home() {
         importedCompanies.push(company);
         existingByName.set(normalizedName, company);
 
-        if (importedContact) {
+        importedRowContacts.forEach((importedContact) => {
           importedContacts.push(importedContact);
           contactKeys.add(`${company.id}:${normalizeCompanyName(importedContact.name)}:${importedContact.email.toLowerCase()}`);
-        }
+        });
       });
 
       if (importedCompanies.length || importedContacts.length) {
@@ -2012,7 +2024,20 @@ export default function Home() {
               }
 
               setSelectedTaskId(null);
-              const result = applyIntent(note, latestCompany, contacts, currentUserName);
+              const contactChoices = resolveAmbiguousContactChoices(
+                note,
+                contacts.filter((contact) => contact.companyId === latestCompany.id)
+              );
+              const baseResult = applyIntent(note, latestCompany, contacts, currentUserName);
+              const result = contactChoices.size
+                ? {
+                    ...baseResult,
+                    tasks: baseResult.tasks.map((task) => ({
+                      ...task,
+                      title: applyContactChoiceToActionTitle(task.title, contactChoices)
+                    }))
+                  }
+                : baseResult;
               const existingContactIds = new Set(contacts.map((contact) => contact.id));
               const newContacts = result.contacts.filter((contact) => !existingContactIds.has(contact.id));
 
@@ -2675,6 +2700,8 @@ function CompanyProfile({
   const timelineRows = getCompanyTimelineRows(company, timeline);
   const accountSummary = buildAccountSummary(company, companyContacts, openTasks, timelineRows);
   const nextAction = getNextAction(openTasks);
+  const visibleContacts = companyContacts.slice(0, 3);
+  const hiddenContactCount = Math.max(companyContacts.length - visibleContacts.length, 0);
 
   function toggleSection(tab: ProfileTab) {
     setExpandedSection((currentSection) => (currentSection === tab ? null : tab));
@@ -2689,78 +2716,105 @@ function CompanyProfile({
     <section className="profile" aria-label="Company Profile">
       <div className="profile-top-row">
         <section className="account-card" aria-label="Account Card">
-          <span className="status">{statusLabel(company.status)}</span>
-          <h2>{company.name}</h2>
-          <dl>
-            <div>
-              <dt>Address</dt>
-              <dd>{getCompanyAddress(company) || "Not set"}</dd>
+          <div className="account-card-section account-company-section">
+            <div className="account-card-heading">
+              <span>Company</span>
+              <strong>{statusLabel(company.status)}</strong>
             </div>
-            <div>
-              <dt>City</dt>
-              <dd>{company.city || "Not set"}</dd>
-            </div>
-            <div>
-              <dt>State</dt>
-              <dd>{company.state || "Not set"}</dd>
-            </div>
-            {primaryContact?.phone ? (
+            <h2>{company.name || "Not set"}</h2>
+            <dl className="account-field-list">
               <div>
-                <dt>Phone</dt>
-                <dd>{primaryContact.phone}</dd>
+                <dt>Address</dt>
+                <dd>{getCompanyAddress(company) || "Not set"}</dd>
               </div>
-            ) : null}
-            {getCompanyWebsite(company) ? (
+              <div>
+                <dt>City, State Zip</dt>
+                <dd>{formatCityStateZip(company) || "Not set"}</dd>
+              </div>
+              <div>
+                <dt>Main Phone</dt>
+                <dd>{primaryContact?.phone || "Not set"}</dd>
+              </div>
               <div>
                 <dt>Website</dt>
-                <dd>{getCompanyWebsite(company)}</dd>
+                <dd>{getCompanyWebsite(company) || "Not set"}</dd>
               </div>
-            ) : null}
-            {primaryContact ? (
+            </dl>
+          </div>
+
+          <div className="account-card-section">
+            <div className="account-card-heading">
+              <span>Primary Contact</span>
+            </div>
+            <dl className="account-field-list">
               <div>
-                <dt>Primary Contact</dt>
-                <dd>{primaryContact.name}</dd>
+                <dt>Name</dt>
+                <dd>{primaryContact?.name || "Not set"}</dd>
               </div>
-            ) : null}
-            <div>
-              <dt>Last Contact</dt>
-              <dd>{company.lastContact || primaryContact?.lastContact || "Not set"}</dd>
-            </div>
-            <div>
-              <dt>Open Actions</dt>
-              <dd>{openTasks.length}</dd>
-            </div>
-            <div className="next-action-row">
-              <dt>Next Action</dt>
-              <dd>
-                {nextAction ? (
-                  <>
-                    <strong>{getActionIcon(nextAction)} {nextAction.title}</strong>
-                    <span>{nextAction.due || "Not set"}</span>
-                  </>
-                ) : (
-                  "No Action Scheduled"
-                )}
-              </dd>
-            </div>
-          </dl>
-          <div className="account-card-contacts">
-            <div className="profile-section-heading">
+              <div>
+                <dt>Title / Role</dt>
+                <dd>{primaryContact?.role || "Not set"}</dd>
+              </div>
+              <div>
+                <dt>Phone</dt>
+                <dd>{primaryContact?.phone || "Not set"}</dd>
+              </div>
+              <div>
+                <dt>Email</dt>
+                <dd>{primaryContact?.email || "Not set"}</dd>
+              </div>
+            </dl>
+          </div>
+
+          <div className="account-card-section account-card-contacts">
+            <div className="account-card-heading">
               <span>Contacts</span>
               <strong>{companyContacts.length}</strong>
             </div>
-            {companyContacts.length ? (
-              <ul className="inline-contact-list">
-                {companyContacts.map((contact) => (
-                  <li key={contact.id}>
-                    <strong>{contact.name}</strong>
-                    <span>{[contact.role, contact.phone, contact.email].filter(Boolean).join(" · ") || "No details yet"}</span>
-                  </li>
-                ))}
-              </ul>
+            {visibleContacts.length ? (
+              <>
+                <ul className="inline-contact-list">
+                  {visibleContacts.map((contact) => (
+                    <li key={contact.id}>
+                      <strong>{contact.name || "Not set"}</strong>
+                      <span>{contact.role || "Not set"}</span>
+                      <span>{contact.phone || "Not set"}</span>
+                      <span>{contact.email || "Not set"}</span>
+                    </li>
+                  ))}
+                </ul>
+                {hiddenContactCount ? (
+                  <p className="more-contacts">+ {hiddenContactCount} more contacts</p>
+                ) : null}
+              </>
             ) : (
               <p className="empty">No contacts saved.</p>
             )}
+          </div>
+
+          <div className="account-card-section account-actions-section">
+            <div className="account-card-heading">
+              <span>Actions</span>
+            </div>
+            <dl className="account-field-list">
+              <div>
+                <dt>Open Actions</dt>
+                <dd>{openTasks.length}</dd>
+              </div>
+              <div className="next-action-row">
+                <dt>Next Action</dt>
+                <dd>
+                  {nextAction ? (
+                    <>
+                      <strong>{getActionIcon(nextAction)} {nextAction.title}</strong>
+                      <span>{nextAction.due || "Not set"}</span>
+                    </>
+                  ) : (
+                    "No Action Scheduled"
+                  )}
+                </dd>
+              </div>
+            </dl>
           </div>
         </section>
 
@@ -3425,24 +3479,106 @@ function parseProspectRows(rows: Array<Record<string, unknown>>): {
   };
 }
 
-function buildImportedContact(row: ProspectImportRow, companyId: string): Contact | null {
-  const name = row.contactName.trim();
+function buildImportedContacts(row: ProspectImportRow, companyId: string): Contact[] {
+  const contactParts = parseImportedContactParts(row.contactName, row.contactRole);
   const phone = row.contactPhone.trim();
   const email = row.contactEmail.trim();
 
-  if (!companyId || (!name && !phone && !email)) {
-    return null;
+  if (!companyId || (!contactParts.length && !phone && !email)) {
+    return [];
   }
 
-  return {
+  const parts = contactParts.length ? contactParts : [{ name: "Imported Contact", role: row.contactRole.trim() || "Imported" }];
+
+  return parts.map((part) => ({
     id: createUuid(),
     companyId,
-    name: name || "Imported Contact",
-    role: row.contactRole.trim() || "Imported",
+    name: part.name,
+    role: part.role || row.contactRole.trim() || "Imported",
     email,
     phone,
     source: "Import",
     createdBy: "Import"
+  }));
+}
+
+function parseImportedContactParts(contactName: string, contactRole: string) {
+  const value = contactName.trim();
+
+  if (!value) {
+    return [];
+  }
+
+  const dashParts = value.split(/\s*[-–—]\s*/).map(cleanImportedContactField).filter(Boolean);
+
+  if (dashParts.length >= 2) {
+    const contactParts: Array<{ name: string; role: string }> = [];
+    let currentName = dashParts[0];
+
+    dashParts.slice(1).forEach((part, index, parts) => {
+      const isLastPart = index === parts.length - 1;
+      const trailingName = isLastPart ? null : extractTrailingImportedName(part);
+      const role = trailingName ? cleanImportedContactField(part.slice(0, trailingName.index)) : part;
+
+      if (currentName) {
+        contactParts.push({ name: currentName, role });
+      }
+
+      currentName = trailingName?.name ?? "";
+    });
+
+    if (contactParts.length) {
+      return contactParts;
+    }
+  }
+
+  const contactParts: Array<{ name: string; role: string }> = [];
+  const nameTitlePattern =
+    /([A-Z][A-Za-z'’-]+(?:\s+[A-Z][A-Za-z'’-]+)+)\s*(?:[-–—]\s*)?([\s\S]*?)(?=\s+[A-Z][A-Za-z'’-]+(?:\s+[A-Z][A-Za-z'’-]+)+\s*[-–—]|$)/g;
+
+  for (const match of value.matchAll(nameTitlePattern)) {
+    const name = cleanImportedContactField(match[1] ?? "");
+    const role = cleanImportedContactField(match[2] ?? "");
+
+    if (name) {
+      contactParts.push({ name, role });
+    }
+  }
+
+  if (contactParts.length) {
+    return contactParts;
+  }
+
+  return [
+    {
+      name: cleanImportedContactField(value),
+      role: cleanImportedContactField(contactRole)
+    }
+  ].filter((contact) => contact.name);
+}
+
+function cleanImportedContactField(value: string) {
+  return value.replace(/\s+/g, " ").replace(/\s*[-–—]\s*$/, "").trim();
+}
+
+function extractTrailingImportedName(value: string) {
+  const words = value.split(/\s+/).filter(Boolean);
+
+  if (words.length < 3) {
+    return null;
+  }
+
+  const trailingWords = words.slice(-2);
+
+  if (!trailingWords.every((word) => /^[A-Z][A-Za-z'’-]+$/.test(word))) {
+    return null;
+  }
+
+  const name = trailingWords.join(" ");
+
+  return {
+    name,
+    index: value.lastIndexOf(name)
   };
 }
 
@@ -3657,6 +3793,55 @@ function taskIdentity(task: Task) {
     task.companyId,
     normalizeCompanyName(task.sourceNote)
   ].join("|");
+}
+
+function resolveAmbiguousContactChoices(note: string, accountContacts: Contact[]) {
+  const choices = new Map<string, string>();
+  const contactsByFirstName = accountContacts.reduce<Map<string, Contact[]>>((groups, contact) => {
+    const firstName = normalizeCompanyName(contact.name.split(/\s+/)[0] ?? "");
+
+    if (!firstName) {
+      return groups;
+    }
+
+    groups.set(firstName, [...(groups.get(firstName) ?? []), contact]);
+    return groups;
+  }, new Map());
+
+  contactsByFirstName.forEach((matchingContacts, firstName) => {
+    if (matchingContacts.length < 2 || !new RegExp(`\\b${escapeRegExp(firstName)}\\b`, "i").test(note)) {
+      return;
+    }
+
+    const options = matchingContacts
+      .map((contact, index) => `${index + 1}. ${contact.name}${contact.role ? ` - ${contact.role}` : ""}`)
+      .join("\n");
+    const answer = window.prompt(`Multiple contacts named ${toTitleCase(firstName)} found. Choose one:\n${options}`);
+    const selectedIndex = Number(answer) - 1;
+    const selectedContact = Number.isInteger(selectedIndex) ? matchingContacts[selectedIndex] : null;
+
+    if (selectedContact) {
+      choices.set(firstName, selectedContact.name);
+    }
+  });
+
+  return choices;
+}
+
+function applyContactChoiceToActionTitle(title: string, choices: Map<string, string>) {
+  return Array.from(choices.entries()).reduce(
+    (currentTitle, [firstName, fullName]) =>
+      currentTitle.replace(new RegExp(`\\b${escapeRegExp(firstName)}\\b`, "i"), fullName),
+    title
+  );
+}
+
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function toTitleCase(value: string) {
+  return value.charAt(0).toUpperCase() + value.slice(1);
 }
 
 function CarrierPreview({ carriers: carrierItems }: { carriers: Carrier[] }) {

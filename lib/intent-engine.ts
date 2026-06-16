@@ -9,6 +9,7 @@ type TaskIntentRule = {
   owner: IntentOwner;
   priority: Task["priority"];
   due?: string;
+  defaultToday?: boolean;
 };
 
 type ActivityIntentRule = {
@@ -116,6 +117,24 @@ const taskIntentRules: TaskIntentRule[] = [
     priority: "normal"
   },
   {
+    match: "send pricing",
+    taskName: "Send Pricing",
+    owner: "sales",
+    priority: "normal"
+  },
+  {
+    match: "send quote",
+    taskName: "Send Quote",
+    owner: "sales",
+    priority: "normal"
+  },
+  {
+    match: "send update",
+    taskName: "Send Update",
+    owner: "sales",
+    priority: "normal"
+  },
+  {
     match: "reach out",
     taskName: "Call Contact",
     owner: "sales",
@@ -124,6 +143,12 @@ const taskIntentRules: TaskIntentRule[] = [
   {
     match: "check back",
     taskName: "Call Contact",
+    owner: "sales",
+    priority: "normal"
+  },
+  {
+    match: "follow up with",
+    taskName: "Follow Up",
     owner: "sales",
     priority: "normal"
   },
@@ -148,39 +173,93 @@ const taskIntentRules: TaskIntentRule[] = [
   },
   {
     match: "need email",
-    taskName: "Send Email",
+    taskName: "Email Contact",
     owner: "sales",
-    priority: "normal"
+    priority: "normal",
+    defaultToday: true
   },
   {
     match: "send email",
-    taskName: "Send Email",
+    taskName: "Email Contact",
     owner: "sales",
-    priority: "normal"
+    priority: "normal",
+    defaultToday: true
+  },
+  {
+    match: "email",
+    taskName: "Email Contact",
+    owner: "sales",
+    priority: "normal",
+    defaultToday: true
+  },
+  {
+    match: "e-mail",
+    taskName: "Email Contact",
+    owner: "sales",
+    priority: "normal",
+    defaultToday: true
   },
   {
     match: "email them",
-    taskName: "Send Email",
+    taskName: "Email Contact",
     owner: "sales",
-    priority: "normal"
+    priority: "normal",
+    defaultToday: true
+  },
+  {
+    match: "email her",
+    taskName: "Email Contact",
+    owner: "sales",
+    priority: "normal",
+    defaultToday: true
+  },
+  {
+    match: "email him",
+    taskName: "Email Contact",
+    owner: "sales",
+    priority: "normal",
+    defaultToday: true
   },
   {
     match: "email customer",
-    taskName: "Send Email",
+    taskName: "Email Contact",
     owner: "sales",
-    priority: "normal"
+    priority: "normal",
+    defaultToday: true
   },
   {
     match: "email prospect",
-    taskName: "Send Email",
+    taskName: "Email Contact",
     owner: "sales",
-    priority: "normal"
+    priority: "normal",
+    defaultToday: true
   },
   {
     match: "email quote",
     taskName: "Send Quote",
     owner: "sales",
     priority: "normal"
+  },
+  {
+    match: "let them know",
+    taskName: "Email Contact",
+    owner: "sales",
+    priority: "normal",
+    defaultToday: true
+  },
+  {
+    match: "let her know",
+    taskName: "Email Contact",
+    owner: "sales",
+    priority: "normal",
+    defaultToday: true
+  },
+  {
+    match: "let him know",
+    taskName: "Email Contact",
+    owner: "sales",
+    priority: "normal",
+    defaultToday: true
   },
   {
     match: "quote request",
@@ -363,7 +442,12 @@ export function applyIntent(
   if (matchedTaskRules.length) {
     const generatedTasks = matchedTaskRules.reduce<Task[]>((uniqueTasks, taskRule) => {
       const owner = taskRule.owner === "sales" ? company.salesLead : company.operationsLead;
-      const actionName = getActionName(taskRule.taskName, taskRule.sourceSentence, taskRule.detectedDue);
+      const actionName = getActionName(
+        taskRule.taskName,
+        taskRule.sourceSentence,
+        contacts.filter((contact) => contact.companyId === company.id),
+        taskRule.detectedDue
+      );
       const dedupeKey = `${actionName}-${owner}-${company.id}-${note}`;
       const hasDuplicate = uniqueTasks.some(
         (task) => `${task.title}-${task.owner}-${task.companyId}-${task.sourceNote}` === dedupeKey
@@ -381,7 +465,7 @@ export function applyIntent(
           entityId: company.id,
           entityType: company.status,
           title: actionName,
-          due: taskRule.detectedDue ?? taskRule.due ?? "Next",
+          due: taskRule.detectedDue ?? taskRule.due ?? (taskRule.defaultToday ? "Today" : ""),
           priority: taskRule.priority,
           status: "open",
           createdAt: timestamp,
@@ -449,18 +533,36 @@ export function applyIntent(
   };
 }
 
-function getActionName(taskName: string, note: string, detectedDue = "") {
-  if (taskName === "Send Rates") {
-    const contact = extractProbableContacts(note)[0];
+function getActionName(taskName: string, note: string, contacts: Contact[], detectedDue = "") {
+  const contact = findReferencedContact(note, contacts);
 
+  if (taskName === "Email Contact") {
+    return contact?.name ? `Email ${contact.name}` : "Send Email";
+  }
+
+  if (taskName === "Send Rates") {
     return contact?.name ? `Send Rates to ${contact.name}` : taskName;
+  }
+
+  if (taskName === "Send Quote") {
+    return contact?.name ? `Send Quote to ${contact.name}` : taskName;
+  }
+
+  if (taskName === "Send Pricing") {
+    return contact?.name ? `Send Pricing to ${contact.name}` : taskName;
+  }
+
+  if (taskName === "Send Update") {
+    return contact?.name ? `Send Update to ${contact.name}` : taskName;
+  }
+
+  if (taskName === "Follow Up") {
+    return contact?.name ? `Follow Up With ${contact.name}` : taskName;
   }
 
   if (taskName !== "Call Contact" && taskName !== "Call Back") {
     return taskName;
   }
-
-  const contact = extractProbableContacts(note)[0];
 
   if (contact?.name) {
     return `Call ${contact.name}`;
@@ -496,12 +598,16 @@ function findTaskRulesForSentence(sentence: string): MatchedTaskRule[] {
     )
     .map((rule) => ({
       ...rule,
-      detectedDue: extractDueFromSentence(sentence),
+      detectedDue: extractDueFromSentence(sentence) || undefined,
       sourceSentence: sentence
     }));
 }
 
 function extractDueFromSentence(sentence: string) {
+  if (/\bnext week\b/i.test(sentence)) {
+    return "Next Week";
+  }
+
   const dayMatch = sentence.match(/\b(today|tomorrow|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i);
 
   if (!dayMatch) {
@@ -600,6 +706,30 @@ function detectAndCreateContacts(
   };
 }
 
+function findReferencedContact(note: string, contacts: Contact[]) {
+  const detectedContact = extractProbableContacts(note)[0];
+
+  if (detectedContact?.name) {
+    const existingContact = contacts.find((contact) => namesMatch(contact.name, detectedContact.name));
+
+    return existingContact ? { name: detectedContact.name, department: existingContact.role } : detectedContact;
+  }
+
+  const matchingContacts = contacts.filter((contact) => {
+    const firstName = normalizeContactName(contact.name).split(/\s+/)[0] ?? "";
+
+    return Boolean(firstName && new RegExp(`\\b${escapeRegExp(firstName)}\\b`, "i").test(note));
+  });
+
+  if (matchingContacts.length === 1) {
+    const firstName = matchingContacts[0].name.split(/\s+/)[0] ?? matchingContacts[0].name;
+
+    return { name: firstName, department: matchingContacts[0].role };
+  }
+
+  return null;
+}
+
 function extractProbableContacts(note: string) {
   const contacts: DetectedContact[] = [];
   const sentences = note
@@ -608,7 +738,8 @@ function extractProbableContacts(note: string) {
     .filter(Boolean);
   const triggerPatterns = [
     /\b(?:[Cc]all|[Ff]ollow up with)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)(?:\s+in\s+([A-Z][A-Za-z &/-]+))?/g,
-    /\b(?:[Ss]end rates to|[Ss]end quote to|[Ee]mail quote to|[Nn]eed pricing for|[Ff]ollow up with|[Cc]heck with)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)(?:\s+in\s+([A-Z][A-Za-z &/-]+))?/g,
+    /\b(?:[Ss]end rates to|[Ss]end quote to|[Ss]end pricing to|[Ss]end update to|[Ee]-?mail quote to|[Nn]eed pricing for|[Ff]ollow up with|[Cc]heck with)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)(?:\s+in\s+([A-Z][A-Za-z &/-]+))?/g,
+    /\b(?:[Nn]eed to\s+)?(?:[Ee]-?mail|[Ss]end email to)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)(?:\s+in\s+([A-Z][A-Za-z &/-]+))?/g,
     /\b(?:[Ss]poke with|[Tt]alked to|[Rr]eceived email from|[Ee]mail from)\s+([A-Z][a-z]+(?:\s+(?:and|&)\s+[A-Z][a-z]+)?(?:\s+[A-Z][a-z]+)?)(?:\s+in\s+([A-Z][A-Za-z &/-]+))?/g,
     /^([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)(?:\s+in\s+([A-Z][A-Za-z &/-]+))?\s+(?:said|says|told|emailed|called|asked|requested)\b/g
   ];
@@ -681,6 +812,10 @@ function namesMatch(firstName: string, secondName: string) {
   const secondGiven = secondNormalized.split(/\s+/)[0] ?? "";
 
   return firstNormalized === secondNormalized || Boolean(firstGiven && firstGiven === secondGiven);
+}
+
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 export function applyCarrierIntent(note: string, carrier: Carrier, createdBy = "Blue Bomber OS", now = new Date()): CarrierIntentResult {
