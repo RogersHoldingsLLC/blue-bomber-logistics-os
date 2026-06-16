@@ -928,6 +928,23 @@ export default function Home() {
     );
   }
 
+  function toggleVisibleBulkProspects(companyIds: string[]) {
+    if (!companyIds.length) {
+      return;
+    }
+
+    setSelectedBulkProspectIds((currentIds) => {
+      const visibleIds = new Set(companyIds);
+      const allVisibleSelected = companyIds.every((companyId) => currentIds.includes(companyId));
+
+      if (allVisibleSelected) {
+        return currentIds.filter((currentId) => !visibleIds.has(currentId));
+      }
+
+      return Array.from(new Set([...currentIds, ...companyIds]));
+    });
+  }
+
   async function persistStateToStorage(state: {
     companies: typeof companies;
     contacts: typeof contacts;
@@ -1774,7 +1791,7 @@ export default function Home() {
 
     if (
       !window.confirm(
-        `Delete ${selectedNames.length} selected prospect${selectedNames.length === 1 ? "" : "s"}? This will remove related contacts, tasks, and timeline entries.`
+        `Delete ${selectedNames.length} selected prospect${selectedNames.length === 1 ? "" : "s"}? This cannot be undone.`
       )
     ) {
       return;
@@ -2112,6 +2129,7 @@ export default function Home() {
           onImportFile={importProspects}
           onSelect={selectCompany}
           onToggleBulkProspect={toggleBulkProspect}
+          onToggleVisibleBulkProspects={toggleVisibleBulkProspects}
         />
       ) : null}
 
@@ -2130,6 +2148,7 @@ export default function Home() {
           onImportFile={importProspects}
           onSelect={selectCompany}
           onToggleBulkProspect={() => undefined}
+          onToggleVisibleBulkProspects={() => undefined}
         />
       ) : null}
 
@@ -2371,7 +2390,8 @@ function CompanyListPage({
   onConfirmImportPreview,
   onImportFile,
   onSelect,
-  onToggleBulkProspect
+  onToggleBulkProspect,
+  onToggleVisibleBulkProspects
 }: {
   canManageList: boolean;
   companies: Company[];
@@ -2389,9 +2409,14 @@ function CompanyListPage({
   onImportFile: (file: File) => void;
   onSelect: (companyId: string) => void;
   onToggleBulkProspect: (companyId: string) => void;
+  onToggleVisibleBulkProspects: (companyIds: string[]) => void;
 }) {
   const isProspectList = title === "Prospect List";
   const hasBulkSelection = selectedBulkProspectIds.length > 0;
+  const visibleCompanyIds = companies.map((company) => company.id);
+  const allVisibleSelected = Boolean(
+    visibleCompanyIds.length && visibleCompanyIds.every((companyId) => selectedBulkProspectIds.includes(companyId))
+  );
   const [showListManagement, setShowListManagement] = useState(false);
 
   return (
@@ -2448,6 +2473,13 @@ function CompanyListPage({
         <div className="bulk-control list-bulk-control" aria-label="Bulk prospect actions">
           <div className="bulk-actions horizontal">
             <span>{selectedBulkProspectIds.length} selected</span>
+            <button
+              type="button"
+              disabled={!visibleCompanyIds.length}
+              onClick={() => onToggleVisibleBulkProspects(visibleCompanyIds)}
+            >
+              {allVisibleSelected ? "Deselect All" : "Select All"}
+            </button>
             <select
               aria-label="Change selected prospect status"
               disabled={!hasBulkSelection}
@@ -2474,7 +2506,7 @@ function CompanyListPage({
               disabled={!hasBulkSelection}
               onClick={onDeleteSelected}
             >
-              Delete
+              Delete Selected ({selectedBulkProspectIds.length})
             </button>
           </div>
         </div>
