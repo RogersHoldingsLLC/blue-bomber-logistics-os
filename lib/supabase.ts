@@ -7,7 +7,3 @@ export const supabase =
   supabaseUrl && supabaseAnonKey
     ? createClient(supabaseUrl, supabaseAnonKey)
     : null;
-
-if (typeof window !== "undefined") {
-  console.log("[Blue Bomber Supabase] client available:", Boolean(supabase));
-}

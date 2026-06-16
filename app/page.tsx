@@ -391,13 +391,13 @@ export default function Home() {
 
       const nextUser = data.session?.user ? mapSupabaseUser(data.session.user) : null;
 
-      console.log("[Blue Bomber Auth] session found:", Boolean(nextUser));
       if (nextUser) {
-        console.log("[Blue Bomber Auth] logged in user:", {
+        console.log("[Blue Bomber Auth] session found:", {
           name: nextUser.name,
-          role: nextUser.role,
-          email: nextUser.email
+          role: nextUser.role
         });
+      } else {
+        console.log("[Blue Bomber Auth] no active session");
       }
 
       setAppUser(nextUser);
@@ -412,8 +412,7 @@ export default function Home() {
       if (nextUser) {
         console.log("[Blue Bomber Auth] logged in user:", {
           name: nextUser.name,
-          role: nextUser.role,
-          email: nextUser.email
+          role: nextUser.role
         });
       }
 
@@ -462,7 +461,6 @@ export default function Home() {
     async function hydrateState() {
       try {
         const supabaseAvailable = canUseSupabase();
-        console.log("[Blue Bomber Supabase] client available:", supabaseAvailable);
 
         if (!supabaseAvailable) {
           const storedState = loadStoredState();
@@ -485,6 +483,8 @@ export default function Home() {
           const storedState = loadStoredState();
           const storedCarrierTasks = storedState?.tasks.filter((task) => task.entityType === "carrier") ?? [];
           const supabaseTaskIds = new Set(supabaseState.tasks.map((task) => task.id));
+          const storedFiles = storedState?.files ?? [];
+          const storedFilePaths = new Set(storedFiles.map((file) => file.path));
 
           setCompanies(supabaseState.companies);
           setContacts(supabaseState.contacts);
@@ -494,7 +494,10 @@ export default function Home() {
           ]);
           setTimeline(supabaseState.timeline);
           setCarrierItems(supabaseState.carriers);
-          setFiles(storedState?.files ?? []);
+          setFiles([
+            ...storedFiles,
+            ...(supabaseState.files ?? []).filter((file) => !storedFilePaths.has(file.path))
+          ]);
         }
       } catch {
         const storedState = loadStoredState();
@@ -894,17 +897,14 @@ export default function Home() {
     carriers: typeof carrierItems;
     files: typeof files;
   }, reason: string) {
-    console.log("[Blue Bomber Supabase] persist requested:", reason);
-    console.log("[Blue Bomber Supabase] client available:", canUseSupabase());
-
     try {
       const savedToSupabase = await saveSupabaseState(state);
 
       saveStoredState(state);
-      console.log("[Blue Bomber Supabase] save result:", savedToSupabase ? "Supabase success" : "localStorage fallback");
+      console.log("[Blue Bomber Supabase] save result:", savedToSupabase ? "success" : "localStorage fallback");
 
       if (!savedToSupabase) {
-        console.log("[Blue Bomber Supabase] localStorage fallback used:", reason);
+        console.warn("[Blue Bomber Supabase] localStorage fallback used:", reason);
       }
     } catch (error) {
       console.error("[Blue Bomber Supabase] localStorage fallback after Supabase error:", {
@@ -1312,12 +1312,6 @@ export default function Home() {
       const parsedImport = await readProspectImportRows(file);
       const preview = buildImportPreview(file.name, parsedImport, companies);
 
-      console.log("[Blue Bomber Import] row import result:", preview.rows.map((row) => ({
-        rowNumber: row.rowNumber,
-        company: row.row.companyName,
-        action: row.action,
-        skippedReason: row.skippedReason
-      })));
       setImportPreview(preview);
       setImportResult(null);
     } catch (error) {
@@ -1497,12 +1491,30 @@ export default function Home() {
     const selectedContactIds = new Set(smartNoteReview.selectedContactIds);
     const selectedTaskIds = new Set(smartNoteReview.selectedTaskIds);
     const newContactIds = new Set(smartNoteReview.newContacts.map((contact) => contact.id));
-    const selectedNewContacts = smartNoteReview.newContacts.filter((contact) => selectedContactIds.has(contact.id));
+    const selectedNewContacts = smartNoteReview.newContacts.filter((contact) => {
+      if (!selectedContactIds.has(contact.id)) {
+        return false;
+      }
+
+      return !contacts.some((existingContact) =>
+        existingContact.companyId === contact.companyId && contactNamesOverlap(existingContact.name, contact.name)
+      );
+    });
     const selectedContactNames = new Set(selectedNewContacts.map((contact) => contact.name));
-    const nextContacts = smartNoteReview.result.contacts.filter(
-      (contact) => !newContactIds.has(contact.id) || selectedContactIds.has(contact.id)
-    );
-    const selectedTasks = smartNoteReview.result.tasks.filter((task) => selectedTaskIds.has(task.id));
+    const nextContacts = smartNoteReview.result.contacts.filter((contact) => {
+      if (!newContactIds.has(contact.id)) {
+        return true;
+      }
+
+      return selectedNewContacts.some((selectedContact) => selectedContact.id === contact.id);
+    });
+    const selectedTasks = smartNoteReview.result.tasks.filter((task) => {
+      if (!selectedTaskIds.has(task.id)) {
+        return false;
+      }
+
+      return !tasks.some((existingTask) => taskIdentity(existingTask) === taskIdentity(task));
+    });
     const nextTasks = selectedTasks.length ? [...selectedTasks, ...tasks] : tasks;
     const taskCreatedEvents = selectedTasks
       .map((task) =>
@@ -3387,10 +3399,6 @@ function parseProspectRows(rows: Array<Record<string, unknown>>): {
   const mappedHeaders = new Set(Object.values(fieldMapping).filter(Boolean));
   const unmappedColumns = headers.filter((header) => !mappedHeaders.has(header));
 
-  console.log("[Blue Bomber Import] raw headers:", headers);
-  console.log("[Blue Bomber Import] normalized headers:", headers.map(normalizeImportHeader));
-  console.log("[Blue Bomber Import] field mapping result:", fieldMapping);
-
   return {
     headers,
     normalizedHeaders: headers.map(normalizeImportHeader),
@@ -3631,6 +3639,24 @@ function parseImportStatus(value: string): CompanyStatus {
 
 function normalizeCompanyName(value: string) {
   return value.trim().toLowerCase();
+}
+
+function contactNamesOverlap(leftName: string, rightName: string) {
+  const left = normalizeCompanyName(leftName);
+  const right = normalizeCompanyName(rightName);
+  const leftFirst = left.split(/\s+/)[0] ?? "";
+  const rightFirst = right.split(/\s+/)[0] ?? "";
+
+  return Boolean(left && right && (left === right || leftFirst === right || rightFirst === left));
+}
+
+function taskIdentity(task: Task) {
+  return [
+    normalizeCompanyName(task.title),
+    normalizeCompanyName(task.owner),
+    task.companyId,
+    normalizeCompanyName(task.sourceNote)
+  ].join("|");
 }
 
 function CarrierPreview({ carriers: carrierItems }: { carriers: Carrier[] }) {

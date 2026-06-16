@@ -360,12 +360,6 @@ export function applyIntent(
   const matchedTaskRules = normalizedSentences.flatMap((sentence) => findTaskRulesForSentence(sentence));
   const contactDetection = detectAndCreateContacts(note, company, contacts, timestamp, today, createdBy);
 
-  console.log("[Blue Bomber Intent] note received:", note);
-  console.log(
-    "[Blue Bomber Intent] intents detected:",
-    matchedTaskRules.map((rule) => rule.match)
-  );
-
   if (matchedTaskRules.length) {
     const generatedTasks = matchedTaskRules.reduce<Task[]>((uniqueTasks, taskRule) => {
       const owner = taskRule.owner === "sales" ? company.salesLead : company.operationsLead;
@@ -399,16 +393,6 @@ export function applyIntent(
       ];
     }, []);
 
-    console.log(
-      "[Blue Bomber Intent] tasks created:",
-      generatedTasks.map((task) => ({
-        title: task.title,
-        owner: task.owner,
-        companyId: task.companyId,
-        sourceNote: task.sourceNote
-      }))
-    );
-
     return {
       company: {
         ...company,
@@ -423,8 +407,6 @@ export function applyIntent(
       contactTimelineEntries: contactDetection.timelineEntries
     };
   }
-
-  console.log("[Blue Bomber Intent] tasks created:", []);
 
   const activityRule = activityIntentRules.find((rule) => normalizedNote.includes(rule.match));
 

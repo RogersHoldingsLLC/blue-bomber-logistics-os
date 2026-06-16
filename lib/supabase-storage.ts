@@ -74,11 +74,8 @@ export function canUseSupabase() {
 
 export async function loadSupabaseState() {
   if (!supabase) {
-    console.log("[Blue Bomber Supabase] load skipped: client unavailable");
     return null;
   }
-
-  console.log("[Blue Bomber Supabase] load from Supabase started");
 
   const [companiesResult, contactsResult, tasksResult, timelineResult, carriersResult] =
     await Promise.all([
@@ -102,37 +99,26 @@ export async function loadSupabaseState() {
   }
 
   const companyRows = (companiesResult.data ?? []) as CompanyRow[];
-
-  console.log("[Blue Bomber Supabase] load from Supabase success:", {
-    companies: companyRows.length,
-    contacts: contactsResult.data?.length ?? 0,
-    tasks: tasksResult.data?.length ?? 0,
-    timeline: timelineResult.data?.length ?? 0,
-    carriers: carriersResult.data?.length ?? 0
-  });
+  const carrierRows = (carriersResult.data ?? []) as CarrierRow[];
 
   return {
     companies: companyRows.map(fromCompanyRow),
     contacts: ((contactsResult.data ?? []) as ContactRow[]).map(fromContactRow),
     tasks: ((tasksResult.data ?? []) as TaskRow[]).map(fromTaskRow),
     timeline: ((timelineResult.data ?? []) as TimelineRow[]).map(fromTimelineRow),
-    carriers: ((carriersResult.data ?? []) as CarrierRow[]).map(fromCarrierRow)
+    carriers: carrierRows.map(fromCarrierRow),
+    files: await loadSupabaseAccountFiles([
+      ...companyRows.map((company) => ({ accountId: company.id, accountType: "company" as const })),
+      ...carrierRows.map((carrier) => ({ accountId: carrier.id, accountType: "carrier" as const }))
+    ])
   };
 }
 
 export async function saveSupabaseState(state: StoredBlueBomberState) {
   if (!supabase) {
-    console.log("[Blue Bomber Supabase] save skipped: client unavailable");
+    console.warn("[Blue Bomber Supabase] save skipped: client unavailable");
     return false;
   }
-
-  console.log("[Blue Bomber Supabase] save to Supabase started:", {
-    companies: state.companies.length,
-    contacts: state.contacts.length,
-    tasks: state.tasks.length,
-    timeline: state.timeline.length,
-    carriers: state.carriers.length
-  });
 
   const companies = state.companies.map(toCompanyRow);
   const carriers = state.carriers.map(toCarrierRow);
@@ -194,10 +180,11 @@ export async function saveSupabaseState(state: StoredBlueBomberState) {
     const carrierTaskResult = await supabase.from("tasks").upsert(carrierTasks, { onConflict: "id" });
 
     if (carrierTaskResult.error) {
-      console.warn(
-        "[Blue Bomber Supabase] carrier task save skipped; schema may need carrier task columns:",
+      console.error(
+        "[Blue Bomber Supabase] save to Supabase failed at carrier tasks:",
         formatSupabaseError(carrierTaskResult.error)
       );
+      throw carrierTaskResult.error;
     }
   }
 
@@ -252,6 +239,8 @@ export async function uploadSupabaseAccountFile({
     );
   }
 
+  console.log("[Blue Bomber Storage] upload success:", path);
+
   return {
     id: path,
     accountId,
@@ -266,11 +255,8 @@ export async function uploadSupabaseAccountFile({
 
 export async function deleteSupabaseCompany(companyId: string) {
   if (!supabase) {
-    console.log("[Blue Bomber Supabase] delete skipped: client unavailable");
     return false;
   }
-
-  console.log("[Blue Bomber Supabase] delete company started:", companyId);
 
   const result = await supabase.from("companies").delete().eq("id", companyId);
 
@@ -282,22 +268,17 @@ export async function deleteSupabaseCompany(companyId: string) {
     throw result.error;
   }
 
-  console.log("[Blue Bomber Supabase] delete company success:", companyId);
-
   return true;
 }
 
 export async function deleteSupabaseCompanies(companyIds: string[]) {
   if (!supabase) {
-    console.log("[Blue Bomber Supabase] bulk delete skipped: client unavailable");
     return false;
   }
 
   if (!companyIds.length) {
     return true;
   }
-
-  console.log("[Blue Bomber Supabase] bulk delete companies started:", companyIds);
 
   const result = await supabase.from("companies").delete().in("id", companyIds);
 
@@ -309,21 +290,13 @@ export async function deleteSupabaseCompanies(companyIds: string[]) {
     throw result.error;
   }
 
-  console.log("[Blue Bomber Supabase] bulk delete companies success:", companyIds.length);
-
   return true;
 }
 
 export async function importSupabaseProspects(companies: Company[], contacts: Contact[]) {
   if (!supabase) {
-    console.log("[Blue Bomber Supabase] import skipped: client unavailable");
     return false;
   }
-
-  console.log("[Blue Bomber Supabase] import prospects started:", {
-    companies: companies.length,
-    contacts: contacts.length
-  });
 
   const companyRows = companies.map(toCompanyRow);
   const contactRows = contacts.map(toContactRow);
@@ -352,9 +325,62 @@ export async function importSupabaseProspects(companies: Company[], contacts: Co
     throw contactResult.error;
   }
 
-  console.log("[Blue Bomber Supabase] import prospects success");
-
   return true;
+}
+
+async function loadSupabaseAccountFiles(accounts: Array<Pick<AccountFile, "accountId" | "accountType">>) {
+  if (!supabase || !accounts.length) {
+    return [];
+  }
+
+  const storageClient = supabase.storage.from(FILE_BUCKET);
+  const fileGroups = await Promise.all(
+    accounts.map(async ({ accountId, accountType }) => {
+      const prefix = `${accountType}/${accountId}`;
+      const result = await storageClient.list(prefix, {
+        limit: 100,
+        sortBy: { column: "created_at", order: "desc" }
+      });
+
+      if (result.error) {
+        console.error("[Blue Bomber Storage] file list failed:", formatSupabaseError(result.error));
+        return [];
+      }
+
+      return (result.data ?? [])
+        .filter((file) => file.name)
+        .map((file) => {
+          const path = `${prefix}/${file.name}`;
+
+          return {
+            id: path,
+            accountId,
+            accountType,
+            name: displayFileName(file.name),
+            path,
+            size: getStorageFileSize(file.metadata),
+            uploadedAt: file.created_at ?? file.updated_at ?? new Date(0).toISOString(),
+            uploadedBy: ""
+          } satisfies AccountFile;
+        });
+    })
+  );
+
+  return fileGroups.flat().sort((left, right) => right.uploadedAt.localeCompare(left.uploadedAt));
+}
+
+function displayFileName(storageName: string) {
+  return storageName.replace(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}-/i, "");
+}
+
+function getStorageFileSize(metadata: unknown) {
+  if (!metadata || typeof metadata !== "object") {
+    return 0;
+  }
+
+  const size = (metadata as { size?: unknown }).size;
+
+  return typeof size === "number" ? size : 0;
 }
 
 function toCompanyRow(company: Company): CompanyRow {
