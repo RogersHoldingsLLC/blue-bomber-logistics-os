@@ -2898,8 +2898,7 @@ function CompanyProfile({
 
           <div className="account-card-section account-card-contacts">
             <div className="account-card-heading">
-              <span>Contacts</span>
-              <strong>{companyContacts.length}</strong>
+              <span>Contacts ({companyContacts.length})</span>
             </div>
             {hasRepairableContacts ? (
               <button className="secondary-action repair-contacts-action" type="button" onClick={onRepairContacts}>
@@ -2946,12 +2945,9 @@ function CompanyProfile({
           <div className="account-card-section account-actions-section">
             <div className="account-card-heading">
               <span>Actions</span>
+              <strong>Open Actions ({openTasks.length})</strong>
             </div>
             <dl className="account-field-list">
-              <div className="open-actions-row">
-                <dt>Open Actions</dt>
-                <dd>{openTasks.length}</dd>
-              </div>
               <div className="next-action-row">
                 <dt>Next Action</dt>
                 <dd>
@@ -2968,6 +2964,59 @@ function CompanyProfile({
               </div>
             </dl>
           </div>
+
+          <div className="account-card-section manual-entry account-card-manual-entry">
+            <button
+              className="secondary-action manual-entry-toggle"
+              type="button"
+              onClick={() => {
+                setIsManualEntryOpen((value) => !value);
+                setManualPanel(null);
+              }}
+            >
+              Manual Entry
+            </button>
+            {isManualEntryOpen ? (
+              <div className="manual-entry-panel">
+                <div className="manual-entry-options">
+                  <button type="button" onClick={() => setManualPanel(manualPanel === "edit" ? null : "edit")}>
+                    Edit Company Info
+                  </button>
+                  <button type="button" onClick={() => setManualPanel(manualPanel === "contact" ? null : "contact")}>
+                    Add Contact
+                  </button>
+                  <button type="button" onClick={() => setManualPanel(manualPanel === "action" ? null : "action")}>
+                    Add Action
+                  </button>
+                  <button type="button" onClick={() => setManualPanel(manualPanel === "file" ? null : "file")}>
+                    Add File
+                  </button>
+                  {company.status === "prospect" ? (
+                    <button type="button" onClick={onConvertToCustomer}>
+                      Convert Prospect to Customer
+                    </button>
+                  ) : null}
+                </div>
+                {manualPanel === "edit" ? (
+                  <AccountEditForm
+                    company={company}
+                    primaryContact={primaryContact}
+                    onCancel={() => setManualPanel(null)}
+                    onSave={saveAccountEdit}
+                  />
+                ) : null}
+                {manualPanel === "contact" ? (
+                  <ProfileContactsSection contacts={companyContacts} onAddManualContact={onAddManualContact} />
+                ) : null}
+                {manualPanel === "action" ? (
+                  <ProfileTasksSection tasks={openTasks} onAddManualTask={onAddManualTask} />
+                ) : null}
+                {manualPanel === "file" ? (
+                  <FileCabinet files={files} fileCabinetError={fileCabinetError} onUploadFile={onUploadFile} />
+                ) : null}
+              </div>
+            ) : null}
+          </div>
         </section>
 
         <section className="account-summary" aria-label="Account Summary">
@@ -2976,59 +3025,6 @@ function CompanyProfile({
             <p key={sentence}>{sentence}</p>
           ))}
         </section>
-      </div>
-
-      <div className="manual-entry">
-        <button
-          className="secondary-action manual-entry-toggle"
-          type="button"
-          onClick={() => {
-            setIsManualEntryOpen((value) => !value);
-            setManualPanel(null);
-          }}
-        >
-          Manual Entry
-        </button>
-        {isManualEntryOpen ? (
-          <div className="manual-entry-panel">
-            <div className="manual-entry-options">
-              <button type="button" onClick={() => setManualPanel(manualPanel === "edit" ? null : "edit")}>
-                Edit Company Info
-              </button>
-              <button type="button" onClick={() => setManualPanel(manualPanel === "contact" ? null : "contact")}>
-                Add Contact
-              </button>
-              <button type="button" onClick={() => setManualPanel(manualPanel === "action" ? null : "action")}>
-                Add Action
-              </button>
-              <button type="button" onClick={() => setManualPanel(manualPanel === "file" ? null : "file")}>
-                Add File
-              </button>
-              {company.status === "prospect" ? (
-                <button type="button" onClick={onConvertToCustomer}>
-                  Convert Prospect to Customer
-                </button>
-              ) : null}
-            </div>
-            {manualPanel === "edit" ? (
-              <AccountEditForm
-                company={company}
-                primaryContact={primaryContact}
-                onCancel={() => setManualPanel(null)}
-                onSave={saveAccountEdit}
-              />
-            ) : null}
-            {manualPanel === "contact" ? (
-              <ProfileContactsSection contacts={companyContacts} onAddManualContact={onAddManualContact} />
-            ) : null}
-            {manualPanel === "action" ? (
-              <ProfileTasksSection tasks={openTasks} onAddManualTask={onAddManualTask} />
-            ) : null}
-            {manualPanel === "file" ? (
-              <FileCabinet files={files} fileCabinetError={fileCabinetError} onUploadFile={onUploadFile} />
-            ) : null}
-          </div>
-        ) : null}
       </div>
 
       <div className="profile-section-buttons" role="tablist" aria-label="Account sections">
