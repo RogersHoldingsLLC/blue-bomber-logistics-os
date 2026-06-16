@@ -133,6 +133,8 @@ type ImportPreview = {
   detectedColumns: string[];
   normalizedColumns: string[];
   fieldMapping: Record<ImportFieldKey, string>;
+  mappedColumns: Array<{ detected: string; mappedTo: string }>;
+  confidence: "High Confidence" | "Medium Confidence" | "Low Confidence";
   unmappedColumns: string[];
   rows: ImportPreviewRow[];
 };
@@ -2465,6 +2467,7 @@ function ImportPreviewPanel({
           <h3>Import Preview</h3>
           <span>{importPreview.fileName}</span>
         </div>
+        <strong className={confidenceClassName(importPreview.confidence)}>{importPreview.confidence}</strong>
         <div className="profile-actions">
           <button type="button" onClick={onCancel} disabled={isImporting}>
             Cancel
@@ -2488,20 +2491,25 @@ function ImportPreviewPanel({
 
       <div className="import-mapping-grid">
         <div>
-          <strong>Mapped Company Fields</strong>
+          <strong>Detected → Mapped To</strong>
           <ul>
-            {companyFields.map((field) => (
-              <li key={field}>
-                <span>{formatImportField(field)}</span>
-                <b>{importPreview.fieldMapping[field] || "Not mapped"}</b>
+            {importPreview.mappedColumns.length ? importPreview.mappedColumns.map((mapping) => (
+              <li key={`${mapping.detected}-${mapping.mappedTo}`}>
+                <span>{mapping.detected}</span>
+                <b>{mapping.mappedTo}</b>
               </li>
-            ))}
+            )) : (
+              <li>
+                <span>No mapped columns</span>
+                <b>Low Confidence</b>
+              </li>
+            )}
           </ul>
         </div>
         <div>
-          <strong>Mapped Contact Fields</strong>
+          <strong>Required Fields</strong>
           <ul>
-            {contactFields.map((field) => (
+            {[...companyFields, ...contactFields].map((field) => (
               <li key={field}>
                 <span>{formatImportField(field)}</span>
                 <b>{importPreview.fieldMapping[field] || "Not mapped"}</b>
@@ -3592,13 +3600,13 @@ function parseProspectRows(rows: Array<Record<string, unknown>>): {
       city: getImportMappedValue(row, fieldMapping.city),
       state: getImportMappedValue(row, fieldMapping.state),
       zip: getImportMappedValue(row, fieldMapping.zip),
-      phone: getImportMappedValue(row, fieldMapping.phone),
-      email: getImportMappedValue(row, fieldMapping.contactEmail),
+      phone: getImportPhoneValue(row, fieldMapping.phone),
+      email: getImportEmailValue(row, fieldMapping.contactEmail),
       website: getImportMappedValue(row, fieldMapping.website),
       contactName: getImportMappedValue(row, fieldMapping.contactName),
       contactRole: getImportMappedValue(row, fieldMapping.contactRole),
-      contactPhone: getImportMappedValue(row, fieldMapping.contactPhone),
-      contactEmail: getImportMappedValue(row, fieldMapping.contactEmail),
+      contactPhone: getImportPhoneValue(row, fieldMapping.contactPhone || fieldMapping.phone),
+      contactEmail: getImportEmailValue(row, fieldMapping.contactEmail),
       notes: getImportMappedValue(row, fieldMapping.notes)
     }))
   };
@@ -3708,19 +3716,19 @@ function extractTrailingImportedName(value: string) {
 }
 
 const importFieldAliases: Record<ImportFieldKey, string[]> = {
-  companyName: ["company", "company name", "business", "business name", "account", "account name", "name"],
+  companyName: ["company", "company name", "customer", "account", "business", "business name", "account name", "name"],
   status: ["status", "type", "stage", "category"],
   address: ["address", "street", "street address", "address 1", "mailing address"],
-  city: ["city", "town"],
-  state: ["state", "st"],
+  city: ["city", "location city", "location: city", "town"],
+  state: ["state", "province", "location state", "location: state", "st"],
   zip: ["zip", "zipcode", "zip code", "postal code"],
-  phone: ["phone", "company phone", "main phone", "office phone", "telephone", "number"],
+  phone: ["phone", "phone number", "main phone", "contact phone", "company phone", "office phone", "telephone", "number", "email phone", "email & phone"],
   website: ["website", "web", "url", "company website"],
   notes: ["notes", "note", "comments", "description"],
   contactName: ["contact", "contact name", "primary contact", "poc", "point of contact", "name of contact"],
-  contactRole: ["title", "role", "contact title", "job title", "department"],
-  contactPhone: ["contact phone", "mobile", "cell", "direct phone", "phone number"],
-  contactEmail: ["email", "contact email", "e-mail", "email address"]
+  contactRole: ["title", "role", "position", "contact title", "job title", "department"],
+  contactPhone: ["contact phone", "phone", "phone number", "mobile", "cell", "direct phone", "main phone", "email phone", "email & phone"],
+  contactEmail: ["email", "email address", "contact email", "e-mail", "email phone", "email & phone"]
 };
 
 function buildImportPreview(
@@ -3742,6 +3750,8 @@ function buildImportPreview(
     detectedColumns: parsedImport.headers,
     normalizedColumns: parsedImport.normalizedHeaders,
     fieldMapping: parsedImport.fieldMapping,
+    mappedColumns: buildImportMappedColumns(parsedImport.headers, parsedImport.fieldMapping),
+    confidence: getImportConfidence(parsedImport.fieldMapping),
     unmappedColumns: parsedImport.unmappedColumns,
     rows: parsedImport.rows.map((row, index) => {
       const normalizedName = normalizeCompanyName(row.companyName);
@@ -3769,6 +3779,40 @@ function buildImportPreview(
   };
 }
 
+function buildImportMappedColumns(headers: string[], fieldMapping: Record<ImportFieldKey, string>) {
+  return headers
+    .map((header) => {
+      const mappedFields = (Object.entries(fieldMapping) as Array<[ImportFieldKey, string]>)
+        .filter(([, mappedHeader]) => mappedHeader === header)
+        .map(([field]) => formatImportField(field));
+
+      return {
+        detected: header,
+        mappedTo: mappedFields.join(", ")
+      };
+    })
+    .filter((mapping) => mapping.mappedTo);
+}
+
+function getImportConfidence(fieldMapping: Record<ImportFieldKey, string>): ImportPreview["confidence"] {
+  const requiredFields: ImportFieldKey[] = ["companyName", "city", "state", "contactName", "contactEmail", "contactPhone"];
+  const mappedRequiredCount = requiredFields.filter((field) => fieldMapping[field]).length;
+
+  if (fieldMapping.companyName && mappedRequiredCount >= 5) {
+    return "High Confidence";
+  }
+
+  if (fieldMapping.companyName && mappedRequiredCount >= 3) {
+    return "Medium Confidence";
+  }
+
+  return "Low Confidence";
+}
+
+function confidenceClassName(confidence: ImportPreview["confidence"]) {
+  return `import-confidence ${confidence.toLowerCase().replace(/\s+/g, "-")}`;
+}
+
 function getImportHeaders(rows: Array<Record<string, unknown>>) {
   const headers = new Set<string>();
 
@@ -3784,16 +3828,49 @@ function getImportHeaders(rows: Array<Record<string, unknown>>) {
 }
 
 function mapImportHeaders(headers: string[]): Record<ImportFieldKey, string> {
-  const normalizedHeaderMap = new Map(headers.map((header) => [normalizeImportHeader(header), header]));
-
   return Object.fromEntries(
     Object.entries(importFieldAliases).map(([field, aliases]) => {
-      const matchedHeader =
-        aliases.map(normalizeImportHeader).map((alias) => normalizedHeaderMap.get(alias)).find(Boolean) ?? "";
+      const matchedHeader = findBestImportHeader(headers, aliases);
 
       return [field, matchedHeader];
     })
   ) as Record<ImportFieldKey, string>;
+}
+
+function findBestImportHeader(headers: string[], aliases: string[]) {
+  const scoredHeaders = headers
+    .map((header) => ({
+      header,
+      score: getImportHeaderScore(header, aliases)
+    }))
+    .filter((item) => item.score > 0)
+    .sort((first, second) => second.score - first.score);
+
+  return scoredHeaders[0]?.header ?? "";
+}
+
+function getImportHeaderScore(header: string, aliases: string[]) {
+  const normalizedHeader = normalizeImportHeader(header);
+  const compactHeader = compactImportHeader(header);
+
+  return aliases.reduce((bestScore, alias) => {
+    const normalizedAlias = normalizeImportHeader(alias);
+    const compactAlias = compactImportHeader(alias);
+
+    if (normalizedHeader === normalizedAlias || compactHeader === compactAlias) {
+      return Math.max(bestScore, 100);
+    }
+
+    if (normalizedHeader.includes(normalizedAlias) || compactHeader.includes(compactAlias)) {
+      return Math.max(bestScore, 80);
+    }
+
+    if (normalizedAlias.includes(normalizedHeader) || compactAlias.includes(compactHeader)) {
+      return Math.max(bestScore, 60);
+    }
+
+    return bestScore;
+  }, 0);
 }
 
 function getImportMappedValue(row: Record<string, unknown>, mappedHeader: string) {
@@ -3804,6 +3881,20 @@ function getImportMappedValue(row: Record<string, unknown>, mappedHeader: string
   const value = row[mappedHeader];
 
   return value == null ? "" : String(value).trim();
+}
+
+function getImportEmailValue(row: Record<string, unknown>, mappedHeader: string) {
+  const value = getImportMappedValue(row, mappedHeader);
+  const email = value.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i)?.[0] ?? "";
+
+  return email || value;
+}
+
+function getImportPhoneValue(row: Record<string, unknown>, mappedHeader: string) {
+  const value = getImportMappedValue(row, mappedHeader);
+  const phone = value.match(/(?:\+?1[\s.-]?)?(?:\(?\d{3}\)?[\s.-]?)\d{3}[\s.-]?\d{4}/)?.[0] ?? "";
+
+  return phone || value;
 }
 
 function getImportValueByAliases(row: Record<string, unknown>, aliases: string[]) {
@@ -3818,8 +3909,17 @@ function normalizeImportHeader(value: string) {
   return value
     .trim()
     .toLowerCase()
+    .replace(/%23/g, " ")
+    .replace(/#/g, " ")
+    .replace(/&/g, " ")
+    .replace(/:/g, " ")
     .replace(/[_/-]+/g, " ")
+    .replace(/[^a-z0-9\s]+/g, " ")
     .replace(/\s+/g, " ");
+}
+
+function compactImportHeader(value: string) {
+  return normalizeImportHeader(value).replace(/\s+/g, "");
 }
 
 function formatImportField(field: ImportFieldKey) {

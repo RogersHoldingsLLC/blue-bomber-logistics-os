@@ -1490,6 +1490,28 @@ button.company-preview:hover {
   margin: 0;
 }
 
+.import-confidence {
+  border-radius: 999px;
+  font-size: 12px;
+  padding: 5px 9px;
+  white-space: nowrap;
+}
+
+.import-confidence.high-confidence {
+  background: rgba(16, 138, 91, 0.16);
+  color: var(--success-text);
+}
+
+.import-confidence.medium-confidence {
+  background: var(--surface);
+  color: var(--accent);
+}
+
+.import-confidence.low-confidence {
+  background: var(--attention-surface);
+  color: var(--attention-text);
+}
+
 .import-preview-header span,
 .import-preview-grid span,
 .import-mapping-grid span,
@@ -1528,6 +1550,7 @@ button.company-preview:hover {
   display: flex;
   gap: 8px;
   justify-content: space-between;
+  line-height: 1.35;
 }
 
 .import-mapping-grid b {
