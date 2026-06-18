@@ -2235,7 +2235,9 @@ export default function Home() {
                 note,
                 result,
                 newContacts,
-                selectedContactIds: newContacts.map((contact) => contact.id),
+                selectedContactIds: newContacts
+                  .filter((contact) => contact.confidence === "High")
+                  .map((contact) => contact.id),
                 selectedTaskIds: result.tasks.map((task) => task.id)
               });
             }}
@@ -2730,12 +2732,14 @@ function SmartNoteReviewModal({
                   <label>
                     <input
                       checked={review.selectedContactIds.includes(contact.id)}
+                      disabled={contact.confidence !== "High"}
                       type="checkbox"
                       onChange={() => onToggleContact(contact.id)}
                     />
                     <span>
                       {contact.name}
                       {contact.role ? ` - ${contact.role}` : ""}
+                      {contact.confidence ? ` · ${contact.confidence} confidence` : ""}
                     </span>
                   </label>
                 </li>

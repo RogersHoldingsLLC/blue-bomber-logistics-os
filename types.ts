@@ -16,6 +16,7 @@ export type Contact = {
   lastContact?: string;
   source?: string;
   createdBy?: string;
+  confidence?: "High" | "Medium" | "Low";
 };
 
 export type Task = {

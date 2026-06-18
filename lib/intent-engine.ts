@@ -24,9 +24,12 @@ type CarrierTaskIntentRule = {
   priority: Task["priority"];
 };
 
+type ContactConfidence = "High" | "Medium" | "Low";
+
 type DetectedContact = {
   name: string;
   department: string;
+  confidence: ContactConfidence;
 };
 
 type MatchedTaskRule = TaskIntentRule & {
@@ -398,6 +401,13 @@ const taskIntentRules: TaskIntentRule[] = [
     defaultToday: true
   },
   {
+    match: "need to make a bol",
+    taskName: "Make BOL",
+    owner: "sales",
+    priority: "normal",
+    defaultToday: true
+  },
+  {
     match: "make bol",
     taskName: "Make BOL",
     owner: "sales",
@@ -470,14 +480,70 @@ const ignoredContactWords = new Set([
   "friday",
   "saturday",
   "sunday",
+  "morning",
+  "afternoon",
+  "evening",
+  "asap",
+  "end",
+  "day",
   "load",
   "loads",
+  "shipment",
+  "shipments",
   "truck",
   "trucks",
+  "bol",
+  "quote",
+  "rate",
+  "rates",
+  "pricing",
+  "email",
+  "call",
+  "text",
+  "follow",
+  "up",
+  "need",
+  "to",
+  "we",
+  "us",
   "carrier",
   "customer",
   "prospect",
-  "at"
+  "at",
+  "this",
+  "by"
+]);
+
+const blockedContactPhrases = new Set([
+  "this asap",
+  "morning",
+  "by end",
+  "today",
+  "tomorrow",
+  "bol",
+  "quote",
+  "load",
+  "shipment",
+  "follow up",
+  "email",
+  "call",
+  "text",
+  "need",
+  "need to",
+  "we",
+  "us",
+  "customer",
+  "prospect",
+  "carrier",
+  "call contact",
+  "call back",
+  "send email",
+  "provide quote",
+  "quote load",
+  "make bol",
+  "find email",
+  "find better contact",
+  "find better number"
 ]);
 
 const carrierTaskIntentRules: CarrierTaskIntentRule[] = [
@@ -827,7 +893,12 @@ function detectAndCreateContacts(
     const normalizedName = normalizeContactName(contact.name);
     const firstName = normalizeContactName(contact.name.split(/\s+/)[0] ?? "");
 
-    return normalizedName && !existingNames.has(normalizedName) && !existingFirstNames.has(firstName);
+    return (
+      contact.confidence === "High" &&
+      normalizedName &&
+      !existingNames.has(normalizedName) &&
+      !existingFirstNames.has(firstName)
+    );
   });
   const newContacts = contactsToAdd.map<Contact>((contact) => ({
     id: createUuid(),
@@ -838,7 +909,8 @@ function detectAndCreateContacts(
     phone: "",
     lastContact: today,
     source: "Activity Note",
-    createdBy
+    createdBy,
+    confidence: contact.confidence
   }));
   const timelineEntries = newContacts.map<TimelineEntry>((contact) => ({
     id: createUuid(),
@@ -885,27 +957,36 @@ function extractProbableContacts(note: string) {
     .split(/[\n.!?]+/)
     .map((sentence) => sentence.trim())
     .filter(Boolean);
-  const triggerPatterns = [
-    /\b(?:call|follow up with)\s+([a-z][a-z'’-]+(?:\s+[a-z][a-z'’-]+)?)(?:\s+in\s+([a-z][a-z &/-]+))?/gi,
-    /\b(?:send rates to|send quote to|send pricing to|send update to|e-?mail quote to|need pricing for|follow up with|check with)\s+([a-z][a-z'’-]+(?:\s+[a-z][a-z'’-]+)?)(?:\s+in\s+([a-z][a-z &/-]+))?/gi,
-    /\b(?:need to\s+)?(?:e-?mail|send email to)\s+([a-z][a-z'’-]+(?:\s+[a-z][a-z'’-]+)?)(?:\s+in\s+([a-z][a-z &/-]+))?/gi,
-    /\b(?:need to make|make|create|send|build)?\s*bol\s+for\s+([a-z][a-z'’-]+(?:\s+[a-z][a-z'’-]+)?)(?:\s+in\s+([a-z][a-z &/-]+))?/gi,
-    /\b(?:spoke with|talked to|received email from|email from)\s+([a-z][a-z'’-]+(?:\s+(?:and|&)\s+[a-z][a-z'’-]+)?(?:\s+[a-z][a-z'’-]+)?)(?:\s+in\s+([a-z][a-z &/-]+))?/gi,
-    /^([a-z][a-z'’-]+(?:\s+[a-z][a-z'’-]+)?)(?:\s+in\s+([a-z][a-z &/-]+))?\s+(?:said|says|told|emailed|called|asked|requested)\b/gi
+  const emailPattern = /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi;
+  const phonePattern = /\b(?:\+?1[\s.-]?)?(?:\(?\d{3}\)?[\s.-]?)\d{3}[\s.-]?\d{4}\b/g;
+  const triggerPatterns: Array<{ pattern: RegExp; confidence: ContactConfidence }> = [
+    { pattern: /\b(?:spoke with|talked to|received email from|email from)\s+([a-z][a-z'’-]+(?:\s+(?:and|&)\s+[a-z][a-z'’-]+)?(?:\s+[a-z][a-z'’-]+)?)(?:\s+in\s+([a-z][a-z &/-]+))?/gi, confidence: "High" },
+    { pattern: /^([a-z][a-z'’-]+(?:\s+[a-z][a-z'’-]+)+)(?:\s+in\s+([a-z][a-z &/-]+))?\s+(?:said|says|told|emailed|called|asked|requested)\b/gi, confidence: "High" },
+    { pattern: /\b(?:call|follow up with)\s+([a-z][a-z'’-]+(?:\s+[a-z][a-z'’-]+)?)(?:\s+in\s+([a-z][a-z &/-]+))?/gi, confidence: "Medium" },
+    { pattern: /\b(?:send rates to|send quote to|send pricing to|send update to|e-?mail quote to|need pricing for|follow up with|check with)\s+([a-z][a-z'’-]+(?:\s+[a-z][a-z'’-]+)?)(?:\s+in\s+([a-z][a-z &/-]+))?/gi, confidence: "Medium" },
+    { pattern: /\b(?:need to\s+)?(?:e-?mail|send email to)\s+([a-z][a-z'’-]+(?:\s+[a-z][a-z'’-]+)?)(?:\s+in\s+([a-z][a-z &/-]+))?/gi, confidence: "Medium" },
+    { pattern: /\b(?:need to make|make|create|send|build)?\s*bol\s+for\s+([a-z][a-z'’-]+(?:\s+[a-z][a-z'’-]+)?)(?:\s+in\s+([a-z][a-z &/-]+))?/gi, confidence: "Medium" }
   ];
 
+  for (const emailMatch of Array.from(note.matchAll(emailPattern))) {
+    const email = emailMatch[0];
+    addDetectedContact(contacts, { name: email, department: "Email Address", confidence: "High" });
+  }
+
+  for (const phoneMatch of Array.from(note.matchAll(phonePattern))) {
+    const phone = phoneMatch[0];
+    addDetectedContact(contacts, { name: phone, department: "Phone Number", confidence: "High" });
+  }
+
   sentences.forEach((sentence) => {
-    triggerPatterns.forEach((pattern) => {
-      for (const match of sentence.matchAll(pattern)) {
+    triggerPatterns.forEach(({ pattern, confidence }) => {
+      for (const match of Array.from(sentence.matchAll(pattern))) {
         const rawName = match[1] ?? "";
         const department = cleanDetectedDepartment(match[2] ?? "");
 
-        splitDetectedName(rawName, department).forEach((contact) => {
-          if (
-            isAllowedContactName(contact.name) &&
-            !contacts.some((existingContact) => namesMatch(existingContact.name, contact.name))
-          ) {
-            contacts.push(contact);
+        splitDetectedName(rawName, department, confidence).forEach((contact) => {
+          if (isAllowedContactName(contact.name, contact.confidence)) {
+            addDetectedContact(contacts, contact);
           }
         });
       }
@@ -915,12 +996,13 @@ function extractProbableContacts(note: string) {
   return contacts;
 }
 
-function splitDetectedName(value: string, department: string) {
+function splitDetectedName(value: string, department: string, confidence: ContactConfidence) {
   return value
     .split(/\s+(?:and|&)\s+/i)
     .map((name) => ({
       name: cleanDetectedName(name),
-      department
+      department,
+      confidence: getContactConfidence(cleanDetectedName(name), confidence)
     }))
     .filter((contact) => contact.name);
 }
@@ -947,10 +1029,71 @@ function cleanDetectedDepartment(value: string) {
     .join(" ");
 }
 
-function isAllowedContactName(value: string) {
+function addDetectedContact(contacts: DetectedContact[], contact: DetectedContact) {
+  const existingContact = contacts.find((item) => namesMatch(item.name, contact.name));
+
+  if (!existingContact) {
+    contacts.push(contact);
+    return;
+  }
+
+  if (contactConfidenceRank(contact.confidence) > contactConfidenceRank(existingContact.confidence)) {
+    existingContact.confidence = contact.confidence;
+    existingContact.department = contact.department || existingContact.department;
+  }
+}
+
+function getContactConfidence(value: string, baseConfidence: ContactConfidence): ContactConfidence {
+  if (isEmailAddress(value) || isPhoneNumber(value)) {
+    return "High";
+  }
+
+  if (!hasFirstAndLastName(value)) {
+    return "Low";
+  }
+
+  return "High";
+}
+
+function contactConfidenceRank(confidence: ContactConfidence) {
+  return confidence === "High" ? 3 : confidence === "Medium" ? 2 : 1;
+}
+
+function isAllowedContactName(value: string, confidence: ContactConfidence) {
+  const normalizedValue = normalizeContactName(value);
   const parts = value.split(/\s+/).filter(Boolean);
 
-  return Boolean(parts.length) && parts.every((part) => !ignoredContactWords.has(part.toLowerCase()));
+  if (!normalizedValue || blockedContactPhrases.has(normalizedValue)) {
+    return false;
+  }
+
+  if (isEmailAddress(value) || isPhoneNumber(value)) {
+    return true;
+  }
+
+  if (confidence !== "High") {
+    return false;
+  }
+
+  return (
+    parts.length >= 2 &&
+    parts.every((part) => !ignoredContactWords.has(part.toLowerCase())) &&
+    hasFirstAndLastName(value)
+  );
+}
+
+function hasFirstAndLastName(value: string) {
+  const parts = value.split(/\s+/).filter(Boolean);
+
+  return parts.length >= 2 && parts.every((part) => /^[A-Za-z][A-Za-z'’-]+$/.test(part));
+}
+
+function isEmailAddress(value: string) {
+  return /^[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}$/i.test(value.trim());
+}
+
+function isPhoneNumber(value: string) {
+  return /^(?:\+?1[\s.-]?)?(?:\(?\d{3}\)?[\s.-]?)\d{3}[\s.-]?\d{4}$/.test(value.trim());
 }
 
 function normalizeContactName(value: string) {
