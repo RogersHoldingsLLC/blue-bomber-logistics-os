@@ -55,6 +55,23 @@ export type AccountFile = {
   uploadedBy: string;
 };
 
+export type CommunicationLog = {
+  id: string;
+  entityId: string;
+  entityType: TaskEntityType;
+  direction: "sent" | "received";
+  subject: string;
+  contactOrEmail: string;
+  occurredAt: string;
+  summary: string;
+  followUpNeeded: boolean;
+  followUpActionText: string;
+  followUpDueDate: string;
+  source: "Outlook" | "Gmail Operations";
+  createdAt: string;
+  createdBy: string;
+};
+
 export type Company = {
   id: string;
   name: string;

@@ -368,6 +368,33 @@ h1 {
   background: var(--surface-muted);
 }
 
+.sync-indicator {
+  align-items: center;
+  color: var(--muted);
+  display: flex;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.sync-indicator-syncing span {
+  color: var(--accent);
+}
+
+.sync-indicator-failed span {
+  color: var(--attention);
+}
+
+.sync-indicator-unsaved span {
+  color: var(--warning, #9a6a00);
+}
+
+.sync-refresh {
+  min-height: 28px;
+  padding: 0 8px;
+}
+
 .user-menu {
   position: relative;
 }
@@ -1384,6 +1411,19 @@ button.company-preview:hover {
   grid-template-rows: auto minmax(280px, 1fr);
 }
 
+.account-summary-header {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+}
+
+.account-summary-header button {
+  min-height: 28px;
+  padding: 0 9px;
+  white-space: nowrap;
+}
+
 .account-summary h3 {
   font-size: 13px;
   letter-spacing: 0;
@@ -1927,6 +1967,44 @@ button.company-preview:hover {
   font-weight: 800;
   min-height: 34px;
   padding: 0 12px;
+}
+
+.manual-form textarea {
+  background: var(--input-surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  min-height: 68px;
+  padding: 8px 10px;
+}
+
+.email-log-form {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.email-log-form textarea,
+.email-log-form .manual-checkbox-row,
+.email-log-form .manual-source-row,
+.email-log-form button {
+  grid-column: 1 / -1;
+}
+
+.manual-checkbox-row {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  justify-content: flex-start;
+}
+
+.manual-checkbox-row input {
+  min-height: auto;
+  width: auto;
+}
+
+.manual-source-row {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
 }
 
 .command-timeline {

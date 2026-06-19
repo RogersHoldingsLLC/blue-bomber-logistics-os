@@ -408,6 +408,13 @@ const taskIntentRules: TaskIntentRule[] = [
     defaultToday: true
   },
   {
+    match: "need bol",
+    taskName: "Make BOL",
+    owner: "sales",
+    priority: "normal",
+    defaultToday: true
+  },
+  {
     match: "make bol",
     taskName: "Make BOL",
     owner: "sales",
@@ -723,7 +730,11 @@ function getActionName(taskName: string, note: string, contacts: Contact[], dete
   }
 
   if (taskName === "Follow Up") {
-    return contact?.name ? `Follow Up With ${contact.name}` : taskName;
+    if (contact?.name) {
+      return `Follow Up With ${contact.name}`;
+    }
+
+    return detectedDue ? `Follow Up ${extractDueLabel(detectedDue)}` : taskName;
   }
 
   if (taskName === "Make BOL") {
@@ -752,8 +763,12 @@ function getActionName(taskName: string, note: string, contacts: Contact[], dete
 }
 
 function splitIntentSentences(note: string) {
+  const actionBoundaryPattern = /\b(need\s+better\s+contacts?|better\s+contacts?|need\s+better\s+number|need\s+new\s+poc|need\s+email|need\s+carrier\s+base|need\s+carrier\s+setup|need\s+coi|need\s+w9|need\s+noa|need\s+(?:to\s+)?(?:make\s+a\s+)?bol|need\s+bol|make\s+bol|create\s+bol|send\s+bol|build\s+bol|bol\s+for|need\s+(?:to\s+)?quote|need\s+rate\s+from|need\s+pricing(?:\s+on\s+load)?|quote\s+this\s+load|quote\s+load|quote\s+from|rate\s+load|price\s+load|load\s+from|follow\s+up(?:\s+with)?|call\s+back|call\s+|send\s+rates|send\s+quote|send\s+pricing|send\s+update|send\s+email|e-?mail\s+quote|email\s+)/gi;
+
   return note
-    .split(/[\n.!?]+/)
+    .replace(/[\n.!?]+/g, "|")
+    .replace(actionBoundaryPattern, "|$1")
+    .split("|")
     .map((sentence) => sentence.trim())
     .filter(Boolean);
 }
@@ -776,7 +791,7 @@ function findTaskRulesForSentence(sentence: string): MatchedTaskRule[] {
       ...rule,
       priority: /\basap\b/i.test(sentence) ? "high" : rule.priority,
       detectedDue: extractDueFromSentence(sentence) || undefined,
-      sourceSentence: sentence
+      sourceSentence: cleanRuleSourceSentence(sentence, rule.match)
     }));
 }
 
@@ -810,18 +825,38 @@ function extractDueFromSentence(sentence: string) {
 }
 
 function extractLane(sentence: string) {
-  const match = sentence.match(
-    /\b(?:need\s+rate\s+from|quote\s+from|load\s+from|from)\s+(.+?)\s+to\s+(.+?)(?:\s+(?:today|tomorrow|asap|please|now|for\s+quote))?$/i
+  const cleanedSentence = trimActionTail(sentence);
+  const match = cleanedSentence.match(
+    /\b(?:need\s+rate\s+from|need\s+(?:to\s+)?quote(?:\s+load)?\s+from|quote\s+from|load\s+from|from)\s+(.+?)\s+to\s+(.+?)(?:\s+(?:today|tomorrow|asap|please|now|for\s+quote))?$/i
   );
 
   if (!match) {
     return null;
   }
 
-  const origin = formatLaneLocation(match[1] ?? "");
-  const destination = formatLaneLocation(match[2] ?? "");
+  const origin = formatLaneLocation(trimActionTail(match[1] ?? ""));
+  const destination = formatLaneLocation(trimActionTail(match[2] ?? ""));
 
   return origin && destination ? { origin, destination } : null;
+}
+
+function cleanRuleSourceSentence(sentence: string, match: string) {
+  const matchIndex = sentence.toLowerCase().indexOf(match.toLowerCase());
+  const focusedSentence = matchIndex >= 0 ? sentence.slice(matchIndex) : sentence;
+
+  return trimActionTail(focusedSentence);
+}
+
+function trimActionTail(value: string) {
+  return value
+    .replace(/\b(?:also|then|and\s+then)\b.*$/i, "")
+    .replace(/\s+\b(?:follow\s+up|call\s+back|call\s+|email\s+|e-?mail\s+|send\s+rates|send\s+quote|send\s+pricing|send\s+update|send\s+email|need\s+better|need\s+new|need\s+carrier|need\s+coi|need\s+w9|need\s+noa|need\s+(?:to\s+)?(?:make\s+a\s+)?bol|need\s+bol|make\s+bol|create\s+bol|send\s+bol|build\s+bol|bol\s+for|need\s+(?:to\s+)?quote|need\s+rate|need\s+pricing|quote\s+load|quote\s+from|rate\s+load|price\s+load|load\s+from|and\s+ask|ask\s+if)\b.*$/i, "")
+    .replace(/[.,;:]+$/g, "")
+    .trim();
+}
+
+function extractDueLabel(value: string) {
+  return value.replace(/\s+\d{1,2}:\d{2}\s+(?:AM|PM)$/i, "").trim();
 }
 
 function formatLaneLocation(value: string) {
@@ -961,7 +996,7 @@ function extractProbableContacts(note: string) {
   const phonePattern = /\b(?:\+?1[\s.-]?)?(?:\(?\d{3}\)?[\s.-]?)\d{3}[\s.-]?\d{4}\b/g;
   const triggerPatterns: Array<{ pattern: RegExp; confidence: ContactConfidence }> = [
     { pattern: /\b(?:spoke with|talked to|received email from|email from)\s+([a-z][a-z'’-]+(?:\s+(?:and|&)\s+[a-z][a-z'’-]+)?(?:\s+[a-z][a-z'’-]+)?)(?:\s+in\s+([a-z][a-z &/-]+))?/gi, confidence: "High" },
-    { pattern: /^([a-z][a-z'’-]+(?:\s+[a-z][a-z'’-]+)+)(?:\s+in\s+([a-z][a-z &/-]+))?\s+(?:said|says|told|emailed|called|asked|requested)\b/gi, confidence: "High" },
+    { pattern: /^(?!(?:talked|spoke|called)\b)([a-z][a-z'’-]+(?:\s+[a-z][a-z'’-]+)+)(?:\s+in\s+([a-z][a-z &/-]+))?\s+(?:said|says|told|emailed|called|asked|requested)\b/gi, confidence: "High" },
     { pattern: /\b(?:call|follow up with)\s+([a-z][a-z'’-]+(?:\s+[a-z][a-z'’-]+)?)(?:\s+in\s+([a-z][a-z &/-]+))?/gi, confidence: "Medium" },
     { pattern: /\b(?:send rates to|send quote to|send pricing to|send update to|e-?mail quote to|need pricing for|follow up with|check with)\s+([a-z][a-z'’-]+(?:\s+[a-z][a-z'’-]+)?)(?:\s+in\s+([a-z][a-z &/-]+))?/gi, confidence: "Medium" },
     { pattern: /\b(?:need to\s+)?(?:e-?mail|send email to)\s+([a-z][a-z'’-]+(?:\s+[a-z][a-z'’-]+)?)(?:\s+in\s+([a-z][a-z &/-]+))?/gi, confidence: "Medium" },

@@ -1,6 +1,6 @@
 "use client";
 
-import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { type FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { User } from "@supabase/supabase-js";
 import * as XLSX from "xlsx";
 import {
@@ -12,7 +12,7 @@ import {
   timeline as seedTimeline
 } from "@/lib/data";
 import { applyCarrierIntent, applyIntent, type IntentResult } from "@/lib/intent-engine";
-import { loadStoredState, saveStoredState } from "@/lib/storage";
+import { loadStoredState, saveStoredState, type StoredBlueBomberState } from "@/lib/storage";
 import {
   canUseSupabase,
   deleteSupabaseCompanies,
@@ -25,7 +25,7 @@ import {
 } from "@/lib/supabase-storage";
 import { createUuid } from "@/lib/uuid";
 import { supabase } from "@/lib/supabase";
-import type { AccountFile, Carrier, Company, CompanyStatus, Contact, Task, TimelineEntry } from "@/types";
+import type { AccountFile, Carrier, CommunicationLog, Company, CompanyStatus, Contact, Task, TimelineEntry } from "@/types";
 
 type AppRole = "Admin" | "Operations";
 type AppUser = {
@@ -47,6 +47,16 @@ type ManualTaskInput = {
   owner: string;
   due: string;
   priority: Task["priority"];
+};
+type ManualEmailLogInput = {
+  direction: CommunicationLog["direction"];
+  subject: string;
+  contactOrEmail: string;
+  date: string;
+  summary: string;
+  followUpNeeded: boolean;
+  followUpActionText: string;
+  followUpDueDate: string;
 };
 type CompanyEditInput = {
   name: string;
@@ -81,6 +91,7 @@ type ProfileTimelineRow = {
   type: "timeline" | "task";
 };
 type ThemeMode = "light" | "dark";
+type SyncStatus = "synced" | "syncing" | "failed" | "unsaved";
 type AppView =
   | "home"
   | "prospects"
@@ -204,6 +215,28 @@ function statusLabel(status: CompanyStatus) {
   return status === "prospect" ? "Prospect" : "Customer";
 }
 
+function formatSyncStatus(status: SyncStatus, lastSyncedAt: Date | null) {
+  if (status === "syncing") {
+    return "Syncing...";
+  }
+
+  if (status === "failed") {
+    return "Sync failed";
+  }
+
+  if (status === "unsaved") {
+    return "Unsaved changes";
+  }
+
+  if (!lastSyncedAt) {
+    return "Synced just now";
+  }
+
+  const secondsAgo = Math.max(0, Math.floor((Date.now() - lastSyncedAt.getTime()) / 1000));
+
+  return secondsAgo < 60 ? "Synced just now" : "Synced " + Math.floor(secondsAgo / 60) + "m ago";
+}
+
 function formatCompanyMeta(company: Company) {
   const location = [company.city, company.state]
     .filter((value) => value && value.toLowerCase() !== "lead")
@@ -283,17 +316,33 @@ function setSmartNoteField(notes: string, fieldName: string, value: string) {
   return lines.join("\n").trim();
 }
 
-function getCompanyTimelineRows(company: Company, timeline: TimelineEntry[]): ProfileTimelineRow[] {
-  return timeline
-    .filter((entry) => entry.companyId === company.id)
-    .map((entry) => ({
-      id: entry.id,
-      title: entry.at,
-      detail: entry.body,
-      createdAt: entry.createdAt,
-      type: "timeline" as const
-    }))
-    .sort((firstEntry, secondEntry) => secondEntry.createdAt.localeCompare(firstEntry.createdAt));
+function getCompanyTimelineRows(
+  company: Company,
+  timeline: TimelineEntry[],
+  communicationLogs: CommunicationLog[] = []
+): ProfileTimelineRow[] {
+  return [
+    ...timeline
+      .filter((entry) => entry.companyId === company.id)
+      .map((entry) => ({
+        id: entry.id,
+        title: entry.at,
+        detail: entry.body,
+        createdAt: entry.createdAt,
+        type: "timeline" as const
+      })),
+    ...getCommunicationTimelineRows(communicationLogs.filter((log) => log.entityId === company.id))
+  ].sort((firstEntry, secondEntry) => secondEntry.createdAt.localeCompare(firstEntry.createdAt));
+}
+
+function getCommunicationTimelineRows(communicationLogs: CommunicationLog[]): ProfileTimelineRow[] {
+  return communicationLogs.map((log) => ({
+    id: log.id,
+    title: (log.direction === "sent" ? "Email Sent" : "Email Received") + ": " + log.subject,
+    detail: [log.contactOrEmail, log.summary, "Source: " + log.source].filter(Boolean).join(" · "),
+    createdAt: log.occurredAt || log.createdAt,
+    type: "timeline" as const
+  }));
 }
 
 function buildAccountSummary(
@@ -315,7 +364,7 @@ function buildAccountSummary(
       ? `Primary contact: ${primaryContact.name}${primaryContact.role ? `, ${primaryContact.role}` : ""}.`
       : "Primary contact: Not set.",
     `Freight opportunity: ${company.currentOpportunity || "Not set"}${equipment ? ` Equipment: ${equipment}.` : "."}${lanes ? ` Lanes: ${lanes}.` : ""}`,
-    latestNote ? `Most recent note: ${latestNote}` : "Most recent note: Not set.",
+    latestNote ? `Most recent activity: ${latestNote}` : "Most recent activity: Not set.",
     nextAction
       ? `Next action: ${nextAction.title}${nextAction.due ? ` ${nextAction.due}` : ""}.`
       : "Next action: No Action Scheduled."
@@ -360,6 +409,7 @@ export default function Home() {
   const [timeline, setTimeline] = useState(seedTimeline);
   const [carrierItems, setCarrierItems] = useState(seedCarriers);
   const [files, setFiles] = useState<AccountFile[]>([]);
+  const [communicationLogs, setCommunicationLogs] = useState<CommunicationLog[]>([]);
   const [hasHydratedStorage, setHasHydratedStorage] = useState(false);
   const [selectedCompanyId, setSelectedCompanyId] = useState<string | null>(null);
   const [selectedCarrierId, setSelectedCarrierId] = useState<string | null>(null);
@@ -389,6 +439,11 @@ export default function Home() {
   const [manualActionDueDate, setManualActionDueDate] = useState("Today");
   const [manualActionDueTime, setManualActionDueTime] = useState("");
   const [manualActionPriority, setManualActionPriority] = useState<Task["priority"]>("normal");
+  const [syncStatus, setSyncStatus] = useState<SyncStatus>("synced");
+  const [lastSyncedAt, setLastSyncedAt] = useState<Date | null>(null);
+  const syncInFlightRef = useRef(false);
+  const saveInFlightRef = useRef(false);
+  const skipNextAutoPersistRef = useRef(false);
 
   useEffect(() => {
     let isMounted = true;
@@ -482,6 +537,105 @@ export default function Home() {
     window.localStorage.setItem(THEME_STORAGE_KEY, themeMode);
   }, [hasHydratedTheme, themeMode]);
 
+  const hasBlockingLocalEdits = useCallback(() => {
+    if (saveInFlightRef.current || smartNoteReview || showProspectForm || showManualActionForm || importPreview || isImporting) {
+      return true;
+    }
+
+    const activeElement = document.activeElement as HTMLElement | null;
+
+    if (!activeElement) {
+      return false;
+    }
+
+    return Boolean(
+      activeElement.closest(".command-center") ||
+        activeElement.closest(".louie-questions-card") ||
+        activeElement.closest(".manual-form") ||
+        activeElement.closest(".prospect-form") ||
+        activeElement.closest(".new-menu-panel") ||
+        activeElement.getAttribute("role") === "dialog"
+    );
+  }, [importPreview, isImporting, showManualActionForm, showProspectForm, smartNoteReview]);
+
+  const applySyncedState = useCallback((nextState: StoredBlueBomberState) => {
+    skipNextAutoPersistRef.current = true;
+    setCompanies(nextState.companies);
+    setContacts(nextState.contacts);
+    setTasks(nextState.tasks);
+    setTimeline(nextState.timeline);
+    setCarrierItems(nextState.carriers.length ? nextState.carriers : seedCarriers);
+    setFiles(nextState.files ?? []);
+    setCommunicationLogs(nextState.communicationLogs ?? []);
+    saveStoredState(nextState);
+  }, []);
+
+  const loadLatestState = useCallback(async (): Promise<StoredBlueBomberState | null> => {
+    if (canUseSupabase()) {
+      const supabaseState = await loadSupabaseState();
+
+      if (supabaseState) {
+        return {
+          companies: supabaseState.companies,
+          contacts: supabaseState.contacts,
+          tasks: supabaseState.tasks,
+          timeline: supabaseState.timeline,
+          carriers: supabaseState.carriers,
+          files: supabaseState.files ?? [],
+          communicationLogs: supabaseState.communicationLogs ?? []
+        };
+      }
+    }
+
+    const storedState = loadStoredState();
+
+    if (!storedState) {
+      return null;
+    }
+
+    return {
+      companies: storedState.companies,
+      contacts: storedState.contacts,
+      tasks: storedState.tasks,
+      timeline: storedState.timeline,
+      carriers: storedState.carriers.length ? storedState.carriers : seedCarriers,
+      files: storedState.files ?? [],
+      communicationLogs: storedState.communicationLogs ?? []
+    };
+  }, []);
+
+  const refreshLatestData = useCallback(async (reason = "manual") => {
+    if (!appUser || syncInFlightRef.current) {
+      return;
+    }
+
+    if (hasBlockingLocalEdits()) {
+      setSyncStatus("unsaved");
+      return;
+    }
+
+    syncInFlightRef.current = true;
+    saveInFlightRef.current = true;
+    setSyncStatus("syncing");
+
+    try {
+      const nextState = await loadLatestState();
+
+      if (nextState) {
+        applySyncedState(nextState);
+      }
+
+      setLastSyncedAt(new Date());
+      setSyncStatus("synced");
+      console.log("[Blue Bomber Sync] refresh success:", reason);
+    } catch (error) {
+      setSyncStatus("failed");
+      console.error("[Blue Bomber Sync] refresh failed:", error instanceof Error ? error.message : error);
+    } finally {
+      syncInFlightRef.current = false;
+    }
+  }, [appUser, applySyncedState, hasBlockingLocalEdits, loadLatestState]);
+
   useEffect(() => {
     if (!authInitialized || !appUser) {
       return;
@@ -490,57 +644,32 @@ export default function Home() {
     let isMounted = true;
 
     async function hydrateState() {
+      setSyncStatus("syncing");
+
       try {
-        const supabaseAvailable = canUseSupabase();
+        const nextState = await loadLatestState();
 
-        if (!supabaseAvailable) {
-          const storedState = loadStoredState();
-
-          if (storedState && isMounted) {
-            setCompanies(storedState.companies);
-            setContacts(storedState.contacts);
-            setTasks(storedState.tasks);
-            setTimeline(storedState.timeline);
-            setCarrierItems(storedState.carriers.length ? storedState.carriers : seedCarriers);
-            setFiles(storedState.files ?? []);
-          }
-
-          return;
-        }
-
-        const supabaseState = await loadSupabaseState();
-
-        if (supabaseState && isMounted) {
-          const storedState = loadStoredState();
-          const storedCarrierTasks = storedState?.tasks.filter((task) => task.entityType === "carrier") ?? [];
-          const supabaseTaskIds = new Set(supabaseState.tasks.map((task) => task.id));
-          const storedFiles = storedState?.files ?? [];
-          const storedFilePaths = new Set(storedFiles.map((file) => file.path));
-
-          setCompanies(supabaseState.companies);
-          setContacts(supabaseState.contacts);
-          setTasks([
-            ...supabaseState.tasks,
-            ...storedCarrierTasks.filter((task) => !supabaseTaskIds.has(task.id))
-          ]);
-          setTimeline(supabaseState.timeline);
-          setCarrierItems(supabaseState.carriers);
-          setFiles([
-            ...storedFiles,
-            ...(supabaseState.files ?? []).filter((file) => !storedFilePaths.has(file.path))
-          ]);
+        if (nextState && isMounted) {
+          applySyncedState(nextState);
+          setLastSyncedAt(new Date());
+          setSyncStatus("synced");
         }
       } catch {
         const storedState = loadStoredState();
 
         if (storedState && isMounted) {
-          setCompanies(storedState.companies);
-          setContacts(storedState.contacts);
-          setTasks(storedState.tasks);
-          setTimeline(storedState.timeline);
-          setCarrierItems(storedState.carriers.length ? storedState.carriers : seedCarriers);
-          setFiles(storedState.files ?? []);
+          applySyncedState({
+            companies: storedState.companies,
+            contacts: storedState.contacts,
+            tasks: storedState.tasks,
+            timeline: storedState.timeline,
+            carriers: storedState.carriers.length ? storedState.carriers : seedCarriers,
+            files: storedState.files ?? [],
+            communicationLogs: storedState.communicationLogs ?? []
+          });
         }
+
+        setSyncStatus("failed");
       } finally {
         if (isMounted) {
           setHasHydratedStorage(true);
@@ -553,10 +682,15 @@ export default function Home() {
     return () => {
       isMounted = false;
     };
-  }, [appUser, authInitialized]);
+  }, [appUser, applySyncedState, authInitialized, loadLatestState]);
 
   useEffect(() => {
     if (!hasHydratedStorage) {
+      return;
+    }
+
+    if (skipNextAutoPersistRef.current) {
+      skipNextAutoPersistRef.current = false;
       return;
     }
 
@@ -566,9 +700,53 @@ export default function Home() {
       tasks,
       timeline,
       carriers: carrierItems,
-      files
+      files,
+      communicationLogs
     });
-  }, [carrierItems, companies, contacts, files, hasHydratedStorage, tasks, timeline]);
+  }, [carrierItems, communicationLogs, companies, contacts, files, hasHydratedStorage, tasks, timeline]);
+
+  useEffect(() => {
+    if (!hasHydratedStorage || !appUser) {
+      return;
+    }
+
+    let timer: number | null = null;
+    let isCancelled = false;
+
+    function scheduleNextRefresh() {
+      if (isCancelled) {
+        return;
+      }
+
+      const intervalMs = document.hidden ? 120000 : 30000;
+      timer = window.setTimeout(() => {
+        void refreshLatestData(document.hidden ? "auto-hidden" : "auto").finally(scheduleNextRefresh);
+      }, intervalMs);
+    }
+
+    function handleVisibilityChange() {
+      if (document.hidden) {
+        return;
+      }
+
+      if (timer) {
+        window.clearTimeout(timer);
+      }
+
+      void refreshLatestData("tab-active").finally(scheduleNextRefresh);
+    }
+
+    scheduleNextRefresh();
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    return () => {
+      isCancelled = true;
+      if (timer) {
+        window.clearTimeout(timer);
+      }
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [appUser, hasHydratedStorage, refreshLatestData]);
 
   useEffect(() => {
     if (!hasHydratedStorage) {
@@ -952,14 +1130,21 @@ export default function Home() {
     timeline: typeof timeline;
     carriers: typeof carrierItems;
     files: typeof files;
+    communicationLogs: typeof communicationLogs;
   }, reason: string) {
+    setSyncStatus("syncing");
+
     try {
       const savedToSupabase = await saveSupabaseState(state);
 
       saveStoredState(state);
       console.log("[Blue Bomber Supabase] save result:", savedToSupabase ? "success" : "localStorage fallback");
 
-      if (!savedToSupabase) {
+      if (savedToSupabase) {
+        setLastSyncedAt(new Date());
+        setSyncStatus("synced");
+      } else {
+        setSyncStatus("failed");
         console.warn("[Blue Bomber Supabase] localStorage fallback used:", reason);
       }
     } catch (error) {
@@ -967,7 +1152,10 @@ export default function Home() {
         reason,
         error: error instanceof Error ? error.message : error
       });
+      setSyncStatus("failed");
       saveStoredState(state);
+    } finally {
+      saveInFlightRef.current = false;
     }
   }
 
@@ -978,6 +1166,7 @@ export default function Home() {
     timeline?: typeof timeline;
     carriers?: typeof carrierItems;
     files?: typeof files;
+    communicationLogs?: typeof communicationLogs;
   }, reason = "state change") {
     void persistStateToStorage({
       companies: overrides.companies ?? companies,
@@ -985,7 +1174,8 @@ export default function Home() {
       tasks: overrides.tasks ?? tasks,
       timeline: overrides.timeline ?? timeline,
       carriers: overrides.carriers ?? carrierItems,
-      files: overrides.files ?? files
+      files: overrides.files ?? files,
+      communicationLogs: overrides.communicationLogs ?? communicationLogs
     }, reason);
   }
 
@@ -1194,6 +1384,40 @@ export default function Home() {
     }, "repairing imported contacts");
   }
 
+  function createFollowUpTask({
+    entityId,
+    entityType,
+    sourceName,
+    title,
+    due,
+    sourceNote
+  }: {
+    entityId: string;
+    entityType: Task["entityType"];
+    sourceName: string;
+    title: string;
+    due: string;
+    sourceNote: string;
+  }) {
+    const now = new Date().toISOString();
+
+    return {
+      id: createUuid(),
+      companyId: entityId,
+      entityId,
+      entityType,
+      title,
+      due: due || "Today",
+      priority: "normal" as const,
+      status: "open" as const,
+      createdAt: now,
+      owner: currentUserName,
+      createdBy: currentUserName,
+      sourceCompany: sourceName,
+      sourceNote
+    } satisfies Task;
+  }
+
   function addManualTask(company: Company, values: ManualTaskInput) {
     const trimmedTitle = values.title.trim();
 
@@ -1231,6 +1455,131 @@ export default function Home() {
       tasks: nextTasks,
       timeline: nextTimeline
     }, "adding manual task");
+  }
+
+  function logCompanyEmail(company: Company, values: ManualEmailLogInput) {
+    const subject = values.subject.trim();
+
+    if (!subject) {
+      return;
+    }
+
+    const now = new Date().toISOString();
+    const occurredAt = dateInputToIso(values.date) || now;
+    const newLog: CommunicationLog = {
+      id: createUuid(),
+      entityId: company.id,
+      entityType: company.status,
+      direction: values.direction,
+      subject,
+      contactOrEmail: values.contactOrEmail.trim(),
+      occurredAt,
+      summary: values.summary.trim(),
+      followUpNeeded: values.followUpNeeded,
+      followUpActionText: values.followUpActionText.trim(),
+      followUpDueDate: values.followUpDueDate.trim(),
+      source: "Outlook",
+      createdAt: now,
+      createdBy: currentUserName
+    };
+    const followUpTask = values.followUpNeeded && newLog.followUpActionText
+      ? createFollowUpTask({
+          entityId: company.id,
+          entityType: company.status,
+          sourceName: company.name,
+          title: newLog.followUpActionText,
+          due: newLog.followUpDueDate || "Today",
+          sourceNote: "Manual email log: " + subject
+        })
+      : null;
+    const taskEvent = followUpTask
+      ? createTaskTimelineEvent(
+          followUpTask,
+          "Action Created",
+          followUpTask.title + " created for " + followUpTask.owner + " from manual email log."
+        )
+      : null;
+    const nextCommunicationLogs = [newLog, ...communicationLogs];
+    const nextTasks = followUpTask ? [followUpTask, ...tasks] : tasks;
+    const nextTimeline = taskEvent ? [taskEvent, ...timeline] : timeline;
+    const nextCompanies = companies.map((companyItem) =>
+      companyItem.id === company.id
+        ? {
+            ...companyItem,
+            lastContact: formatShortDate(occurredAt),
+            lastActivity: "Email Logged"
+          }
+        : companyItem
+    );
+
+    setCommunicationLogs(nextCommunicationLogs);
+    setTasks(nextTasks);
+    setTimeline(nextTimeline);
+    setCompanies(nextCompanies);
+    persistState({
+      companies: nextCompanies,
+      tasks: nextTasks,
+      timeline: nextTimeline,
+      communicationLogs: nextCommunicationLogs
+    }, followUpTask ? "logging email and creating follow-up" : "logging email");
+    setNoteResult({
+      contacts: [],
+      tasks: followUpTask ? [{ title: followUpTask.title, owner: followUpTask.owner }] : [],
+      systemUpdates: [(newLog.direction === "sent" ? "Email Sent" : "Email Received") + ": " + subject, "Source: " + newLog.source]
+    });
+    window.setTimeout(() => setNoteResult(null), 5000);
+  }
+
+  function logCarrierEmail(carrier: Carrier, values: ManualEmailLogInput) {
+    const subject = values.subject.trim();
+
+    if (!subject) {
+      return;
+    }
+
+    const now = new Date().toISOString();
+    const occurredAt = dateInputToIso(values.date) || now;
+    const newLog: CommunicationLog = {
+      id: createUuid(),
+      entityId: carrier.id,
+      entityType: "carrier",
+      direction: values.direction,
+      subject,
+      contactOrEmail: values.contactOrEmail.trim(),
+      occurredAt,
+      summary: values.summary.trim(),
+      followUpNeeded: values.followUpNeeded,
+      followUpActionText: values.followUpActionText.trim(),
+      followUpDueDate: values.followUpDueDate.trim(),
+      source: "Gmail Operations",
+      createdAt: now,
+      createdBy: currentUserName
+    };
+    const followUpTask = values.followUpNeeded && newLog.followUpActionText
+      ? createFollowUpTask({
+          entityId: carrier.id,
+          entityType: "carrier",
+          sourceName: carrier.name,
+          title: newLog.followUpActionText,
+          due: newLog.followUpDueDate || "Today",
+          sourceNote: "Manual email log: " + subject
+        })
+      : null;
+    const nextCommunicationLogs = [newLog, ...communicationLogs];
+    const nextTasks = followUpTask ? [followUpTask, ...tasks] : tasks;
+
+    setCommunicationLogs(nextCommunicationLogs);
+    setTasks(nextTasks);
+    persistState({
+      tasks: nextTasks,
+      communicationLogs: nextCommunicationLogs
+    }, followUpTask ? "logging carrier email and creating follow-up" : "logging carrier email");
+    setNoteResult({
+      contacts: [],
+      tasks: followUpTask ? [{ title: followUpTask.title, owner: followUpTask.owner }] : [],
+      systemUpdates: [(newLog.direction === "sent" ? "Email Sent" : "Email Received") + ": " + subject, "Source: " + newLog.source]
+    });
+    window.setTimeout(() => setNoteResult(null), 5000);
   }
 
   function addGlobalManualAction() {
@@ -1453,12 +1802,14 @@ export default function Home() {
     const nextTasks = tasks.filter((task) => task.companyId !== company.id);
     const nextTimeline = timeline.filter((entry) => entry.companyId !== company.id);
     const nextFiles = files.filter((file) => file.accountId !== company.id);
+    const nextCommunicationLogs = communicationLogs.filter((log) => log.entityId !== company.id);
 
     setCompanies(nextCompanies);
     setContacts(nextContacts);
     setTasks(nextTasks);
     setTimeline(nextTimeline);
     setFiles(nextFiles);
+    setCommunicationLogs(nextCommunicationLogs);
     setSelectedCompanyId(null);
     setSelectedTaskId(null);
     setCurrentView(company.status === "customer" ? "customers" : "prospects");
@@ -1468,7 +1819,8 @@ export default function Home() {
       tasks: nextTasks,
       timeline: nextTimeline,
       carriers: carrierItems,
-      files: nextFiles
+      files: nextFiles,
+      communicationLogs: nextCommunicationLogs
     });
 
     void deleteSupabaseCompany(company.id).catch((error) => {
@@ -1610,7 +1962,8 @@ export default function Home() {
           tasks,
           timeline,
           carriers: carrierItems,
-          files
+          files,
+          communicationLogs
         });
       }
 
@@ -1802,12 +2155,14 @@ export default function Home() {
     const nextTasks = tasks.filter((task) => !selectedIds.has(task.companyId));
     const nextTimeline = timeline.filter((entry) => !selectedIds.has(entry.companyId));
     const nextFiles = files.filter((file) => !selectedIds.has(file.accountId));
+    const nextCommunicationLogs = communicationLogs.filter((log) => !selectedIds.has(log.entityId));
 
     setCompanies(nextCompanies);
     setContacts(nextContacts);
     setTasks(nextTasks);
     setTimeline(nextTimeline);
     setFiles(nextFiles);
+    setCommunicationLogs(nextCommunicationLogs);
     setSelectedBulkProspectIds([]);
 
     if (selectedCompanyId && selectedIds.has(selectedCompanyId)) {
@@ -1822,7 +2177,8 @@ export default function Home() {
       tasks: nextTasks,
       timeline: nextTimeline,
       carriers: carrierItems,
-      files: nextFiles
+      files: nextFiles,
+      communicationLogs: nextCommunicationLogs
     });
 
     void deleteSupabaseCompanies(companyIdsToDelete).catch((error) => {
@@ -1937,6 +2293,17 @@ export default function Home() {
                 </button>
               </div>
             ) : null}
+          </div>
+          <div className={`sync-indicator sync-indicator-${syncStatus}`} aria-live="polite">
+            <span>{formatSyncStatus(syncStatus, lastSyncedAt)}</span>
+            <button
+              className="secondary-action sync-refresh"
+              disabled={syncStatus === "syncing"}
+              type="button"
+              onClick={() => void refreshLatestData("manual")}
+            >
+              Refresh
+            </button>
           </div>
           <div className="user-menu">
             <button
@@ -2161,11 +2528,13 @@ export default function Home() {
           <CompanyProfile
             company={selectedCompany}
             contacts={companyContacts}
+            communicationLogs={communicationLogs.filter((log) => log.entityId === selectedCompany.id)}
             canManageAccount={isAdmin}
             files={files.filter((file) => file.accountId === selectedCompany.id)}
             fileCabinetError={fileCabinetError}
             onAddManualContact={(values) => addManualContact(selectedCompany, values)}
             onAddManualTask={(values) => addManualTask(selectedCompany, values)}
+            onLogEmail={(values) => logCompanyEmail(selectedCompany, values)}
             onConvertToCustomer={() => convertProspectToCustomer(selectedCompany)}
             onDeleteCompany={() => deleteCompany(selectedCompany)}
             onRepairContacts={() => repairImportedContacts(selectedCompany)}
@@ -2254,6 +2623,7 @@ export default function Home() {
             carrier={selectedCarrier}
             files={files.filter((file) => file.accountId === selectedCarrier.id)}
             fileCabinetError={fileCabinetError}
+            communicationLogs={communicationLogs.filter((log) => log.entityId === selectedCarrier.id)}
             note={carrierNote}
             noteResult={noteResult}
             tasks={selectedCarrierTasks}
@@ -2286,6 +2656,7 @@ export default function Home() {
             onNoteChange={setCarrierNote}
             onUploadFile={(file) => void uploadAccountFile(selectedCarrier.id, "carrier", file)}
             onOpenFile={(file, download) => void openAccountFile(file, download)}
+            onLogEmail={(values) => logCarrierEmail(selectedCarrier, values)}
           />
         </>
       ) : null}
@@ -2823,17 +3194,20 @@ function CarrierProfile({
   carrier,
   files,
   fileCabinetError,
+  communicationLogs,
   note,
   noteResult,
   tasks,
   onAddNote,
   onNoteChange,
   onUploadFile,
-  onOpenFile
+  onOpenFile,
+  onLogEmail
 }: {
   carrier: Carrier;
   files: AccountFile[];
   fileCabinetError: string;
+  communicationLogs: CommunicationLog[];
   note: string;
   noteResult: NoteSaveResult | null;
   tasks: Task[];
@@ -2841,8 +3215,12 @@ function CarrierProfile({
   onNoteChange: (note: string) => void;
   onUploadFile: (file: File) => void;
   onOpenFile: (file: AccountFile, download?: boolean) => void;
+  onLogEmail: (values: ManualEmailLogInput) => void;
 }) {
   const [showCarrierDetails, setShowCarrierDetails] = useState(false);
+  const [isManualEntryOpen, setIsManualEntryOpen] = useState(false);
+  const [manualPanel, setManualPanel] = useState<"email" | null>(null);
+  const carrierTimelineRows = getCommunicationTimelineRows(communicationLogs);
 
   return (
     <section className="profile" aria-label="Carrier Profile">
@@ -2858,6 +3236,31 @@ function CarrierProfile({
           {showCarrierDetails ? "Less" : "More"}
         </button>
       </div>
+
+      <section className="account-card-section manual-entry carrier-manual-entry">
+        <button
+          className="secondary-action manual-entry-toggle"
+          type="button"
+          onClick={() => {
+            setIsManualEntryOpen((value) => !value);
+            setManualPanel(null);
+          }}
+        >
+          Manual Entry
+        </button>
+        {isManualEntryOpen ? (
+          <div className="manual-entry-panel">
+            <div className="manual-entry-options">
+              <button type="button" onClick={() => setManualPanel(manualPanel === "email" ? null : "email")}>
+                Log Email
+              </button>
+            </div>
+            {manualPanel === "email" ? (
+              <ManualEmailLogForm source="Gmail Operations" onSave={onLogEmail} />
+            ) : null}
+          </div>
+        ) : null}
+      </section>
 
       <section className="command-timeline" aria-label="Call Notes">
         <div className="command-center">
@@ -2919,6 +3322,19 @@ Confirm delivery`}
             <p className="empty">No carrier tasks here.</p>
           )}
         </div>
+        <div className="timeline-stream">
+          <h3>Timeline</h3>
+          {carrierTimelineRows.length ? (
+            carrierTimelineRows.map((entry) => (
+              <div className="timeline-item" key={entry.id}>
+                <strong>{formatTimelineTitle(entry.title)}</strong>
+                <span>{entry.detail}</span>
+              </div>
+            ))
+          ) : (
+            <p className="empty">No timeline yet.</p>
+          )}
+        </div>
       </section>
     </section>
   );
@@ -2928,6 +3344,7 @@ function CompanyProfile({
   canManageAccount,
   company,
   contacts: companyContacts,
+  communicationLogs,
   files,
   fileCabinetError,
   tasks: companyTasks,
@@ -2937,6 +3354,7 @@ function CompanyProfile({
   onAddNote,
   onAddManualContact,
   onAddManualTask,
+  onLogEmail,
   onConvertToCustomer,
   onDeleteCompany,
   onRepairContacts,
@@ -2948,6 +3366,7 @@ function CompanyProfile({
   canManageAccount: boolean;
   company: Company;
   contacts: typeof seedContacts;
+  communicationLogs: CommunicationLog[];
   files: AccountFile[];
   fileCabinetError: string;
   tasks: Task[];
@@ -2957,6 +3376,7 @@ function CompanyProfile({
   onAddNote: () => void;
   onAddManualContact: (values: ManualContactInput) => void;
   onAddManualTask: (values: ManualTaskInput) => void;
+  onLogEmail: (values: ManualEmailLogInput) => void;
   onConvertToCustomer: () => void;
   onDeleteCompany: () => void;
   onRepairContacts: () => void;
@@ -2967,12 +3387,17 @@ function CompanyProfile({
 }) {
   const [expandedSection, setExpandedSection] = useState<ProfileTab | null>(null);
   const [isManualEntryOpen, setIsManualEntryOpen] = useState(false);
-  const [manualPanel, setManualPanel] = useState<"edit" | "contact" | "action" | "file" | null>(null);
+  const [manualPanel, setManualPanel] = useState<"edit" | "contact" | "action" | "file" | "email" | null>(null);
   const [contactPage, setContactPage] = useState(0);
   const primaryContact = getPrimaryContact(company, companyContacts);
   const openTasks = companyTasks.filter(isActiveTask).sort(compareTasksByDueThenCreated);
-  const timelineRows = getCompanyTimelineRows(company, timeline);
-  const accountSummary = buildAccountSummary(company, companyContacts, openTasks, timelineRows);
+  const completedTasks = companyTasks.filter((task) => task.status === "completed");
+  const timelineRows = getCompanyTimelineRows(company, timeline, communicationLogs);
+  const fallbackAccountSummary = buildAccountSummary(company, companyContacts, openTasks, timelineRows);
+  const [accountSummaryOverride, setAccountSummaryOverride] = useState<string[] | null>(null);
+  const [isRefreshingSummary, setIsRefreshingSummary] = useState(false);
+  const [summaryRefreshError, setSummaryRefreshError] = useState("");
+  const accountSummary = accountSummaryOverride ?? fallbackAccountSummary;
   const nextAction = getNextAction(openTasks);
   const sortedContacts = primaryContact
     ? [primaryContact, ...companyContacts.filter((contact) => contact.id !== primaryContact.id)]
@@ -2995,6 +3420,8 @@ function CompanyProfile({
 
   useEffect(() => {
     setContactPage(0);
+    setAccountSummaryOverride(null);
+    setSummaryRefreshError("");
   }, [company.id]);
 
   function toggleSection(tab: ProfileTab) {
@@ -3004,6 +3431,48 @@ function CompanyProfile({
   function saveAccountEdit(values: CompanyEditInput) {
     onUpdateCompany(values);
     setManualPanel(null);
+  }
+
+  async function refreshAccountSummary() {
+    setIsRefreshingSummary(true);
+    setSummaryRefreshError("");
+
+    try {
+      const response = await fetch("/api/account-summary", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          company,
+          contacts: companyContacts,
+          qualifyingQuestions: company.qualifyingQuestions,
+          timeline: timelineRows.slice(0, 12),
+          openTasks,
+          completedTasks: completedTasks.slice(0, 8),
+          fallbackSummary: fallbackAccountSummary
+        })
+      });
+      const payload = (await response.json()) as { bullets?: string[]; error?: string };
+
+      if (!response.ok || !payload.bullets?.length) {
+        throw new Error(payload.error || "Could not refresh account summary.");
+      }
+
+      const previewText = [
+        "Replace Account Summary with this AI refresh?",
+        "",
+        ...payload.bullets.map((bullet) => "- " + bullet)
+      ].join("\n");
+
+      if (window.confirm(previewText)) {
+        setAccountSummaryOverride(payload.bullets);
+      }
+    } catch (error) {
+      setSummaryRefreshError(error instanceof Error ? error.message : "Could not refresh account summary.");
+    } finally {
+      setIsRefreshingSummary(false);
+    }
   }
 
   return (
@@ -3169,6 +3638,9 @@ function CompanyProfile({
                   <button type="button" onClick={() => setManualPanel(manualPanel === "file" ? null : "file")}>
                     Add File
                   </button>
+                  <button type="button" onClick={() => setManualPanel(manualPanel === "email" ? null : "email")}>
+                    Log Email
+                  </button>
                   {company.status === "prospect" ? (
                     <button type="button" onClick={onConvertToCustomer}>
                       Convert Prospect to Customer
@@ -3189,6 +3661,9 @@ function CompanyProfile({
                 {manualPanel === "action" ? (
                   <ProfileTasksSection tasks={openTasks} onAddManualTask={onAddManualTask} />
                 ) : null}
+                {manualPanel === "email" ? (
+                  <ManualEmailLogForm source="Outlook" onSave={onLogEmail} />
+                ) : null}
                 {manualPanel === "file" ? (
                   <FileCabinet
                     files={files}
@@ -3204,7 +3679,13 @@ function CompanyProfile({
 
         <div className="profile-side-column">
           <section className="account-summary" aria-label="Account Summary">
-            <h3>Account Summary</h3>
+            <div className="account-summary-header">
+              <h3>Account Summary</h3>
+              <button className="secondary-action" disabled={isRefreshingSummary} type="button" onClick={() => void refreshAccountSummary()}>
+                {isRefreshingSummary ? "Refreshing" : "AI Refresh Summary"}
+              </button>
+            </div>
+            {summaryRefreshError ? <p className="error-text">{summaryRefreshError}</p> : null}
             <ul className="account-summary-list">
               {accountSummary.map((sentence) => (
                 <li key={sentence}>{sentence}</li>
@@ -3321,6 +3802,96 @@ function AccountEditForm({
       </button>
       <button className="ghost" type="button" onClick={onCancel}>
         Cancel
+      </button>
+    </div>
+  );
+}
+
+function ManualEmailLogForm({
+  source,
+  onSave
+}: {
+  source: CommunicationLog["source"];
+  onSave: (values: ManualEmailLogInput) => void;
+}) {
+  const today = new Date().toISOString().slice(0, 10);
+  const [direction, setDirection] = useState<CommunicationLog["direction"]>("sent");
+  const [subject, setSubject] = useState("");
+  const [contactOrEmail, setContactOrEmail] = useState("");
+  const [date, setDate] = useState(today);
+  const [summary, setSummary] = useState("");
+  const [followUpNeeded, setFollowUpNeeded] = useState(false);
+  const [followUpActionText, setFollowUpActionText] = useState("");
+  const [followUpDueDate, setFollowUpDueDate] = useState("");
+
+  function submitEmailLog() {
+    if (!subject.trim()) {
+      return;
+    }
+
+    onSave({
+      direction,
+      subject,
+      contactOrEmail,
+      date,
+      summary,
+      followUpNeeded,
+      followUpActionText,
+      followUpDueDate
+    });
+    setDirection("sent");
+    setSubject("");
+    setContactOrEmail("");
+    setDate(today);
+    setSummary("");
+    setFollowUpNeeded(false);
+    setFollowUpActionText("");
+    setFollowUpDueDate("");
+  }
+
+  return (
+    <div className="manual-form email-log-form" aria-label="Log email">
+      <select
+        value={direction}
+        onChange={(event) => setDirection(event.target.value as CommunicationLog["direction"])}
+        aria-label="Direction"
+      >
+        <option value="sent">Sent</option>
+        <option value="received">Received</option>
+      </select>
+      <input value={subject} onChange={(event) => setSubject(event.target.value)} placeholder="Subject" />
+      <input
+        value={contactOrEmail}
+        onChange={(event) => setContactOrEmail(event.target.value)}
+        placeholder="Contact / Email"
+      />
+      <input value={date} onChange={(event) => setDate(event.target.value)} type="date" aria-label="Date" />
+      <textarea value={summary} onChange={(event) => setSummary(event.target.value)} placeholder="Summary / Notes" />
+      <label className="manual-checkbox-row">
+        <input
+          checked={followUpNeeded}
+          onChange={(event) => setFollowUpNeeded(event.target.checked)}
+          type="checkbox"
+        />
+        <span>Follow-up needed</span>
+      </label>
+      {followUpNeeded ? (
+        <>
+          <input
+            value={followUpActionText}
+            onChange={(event) => setFollowUpActionText(event.target.value)}
+            placeholder="Follow-up action text"
+          />
+          <input
+            value={followUpDueDate}
+            onChange={(event) => setFollowUpDueDate(event.target.value)}
+            placeholder="Follow-up due date"
+          />
+        </>
+      ) : null}
+      <div className="manual-source-row">Source: {source}</div>
+      <button type="button" onClick={submitEmailLog}>
+        Save Email Log
       </button>
     </div>
   );
@@ -4830,6 +5401,30 @@ function formatFileDate(uploadedAt: string) {
   return date.toLocaleDateString(undefined, {
     month: "short",
     day: "numeric",
+    year: "numeric"
+  });
+}
+
+function dateInputToIso(value: string) {
+  if (!value) {
+    return "";
+  }
+
+  const date = new Date(value + "T12:00:00");
+
+  return Number.isNaN(date.getTime()) ? "" : date.toISOString();
+}
+
+function formatShortDate(value: string) {
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return "Today";
+  }
+
+  return date.toLocaleDateString(undefined, {
+    month: "2-digit",
+    day: "2-digit",
     year: "numeric"
   });
 }

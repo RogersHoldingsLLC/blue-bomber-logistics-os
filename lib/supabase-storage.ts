@@ -1,7 +1,7 @@
 import { supabase } from "@/lib/supabase";
 import type { StoredBlueBomberState } from "@/lib/storage";
 import { createUuid } from "@/lib/uuid";
-import type { AccountFile, Carrier, Company, Contact, Task, TimelineEntry } from "@/types";
+import type { AccountFile, Carrier, CommunicationLog, Company, Contact, Task, TimelineEntry } from "@/types";
 
 export const FILE_BUCKET = "blue-bomber-files";
 
@@ -68,6 +68,25 @@ type TimelineRow = {
   created_at: string;
 };
 
+type CommunicationLogRow = {
+  id: string;
+  company_id: string | null;
+  carrier_id: string | null;
+  entity_id: string;
+  entity_type: CommunicationLog["entityType"];
+  direction: CommunicationLog["direction"];
+  subject: string;
+  contact_or_email: string | null;
+  occurred_at: string;
+  summary: string | null;
+  follow_up_needed: boolean;
+  follow_up_action_text: string | null;
+  follow_up_due_date: string | null;
+  source: CommunicationLog["source"];
+  created_by: string;
+  created_at: string;
+};
+
 export function canUseSupabase() {
   return Boolean(supabase);
 }
@@ -107,6 +126,7 @@ export async function loadSupabaseState() {
     tasks: ((tasksResult.data ?? []) as TaskRow[]).map(fromTaskRow),
     timeline: ((timelineResult.data ?? []) as TimelineRow[]).map(fromTimelineRow),
     carriers: carrierRows.map(fromCarrierRow),
+    communicationLogs: await loadSupabaseCommunicationLogs(),
     files: await loadSupabaseAccountFiles([
       ...companyRows.map((company) => ({ accountId: company.id, accountType: "company" as const })),
       ...carrierRows.map((carrier) => ({ accountId: carrier.id, accountType: "carrier" as const }))
@@ -130,6 +150,7 @@ export async function saveSupabaseState(state: StoredBlueBomberState) {
     .filter((task) => task.entityType === "carrier")
     .map(toCarrierTaskRow);
   const timeline = state.timeline.map(toTimelineRow);
+  const communicationLogs = (state.communicationLogs ?? []).map(toCommunicationLogRow);
 
   const companyResult = companies.length
     ? await supabase.from("companies").upsert(companies, { onConflict: "id" })
@@ -198,6 +219,18 @@ export async function saveSupabaseState(state: StoredBlueBomberState) {
       formatSupabaseError(timelineResult.error)
     );
     throw timelineResult.error;
+  }
+
+  const communicationResult = communicationLogs.length
+    ? await supabase.from("communication_logs").upsert(communicationLogs, { onConflict: "id" })
+    : { error: null };
+
+  if (communicationResult.error) {
+    console.error(
+      "[Blue Bomber Supabase] save to Supabase failed at communication logs:",
+      formatSupabaseError(communicationResult.error)
+    );
+    throw communicationResult.error;
   }
 
   console.log("[Blue Bomber Supabase] save to Supabase success");
@@ -354,6 +387,21 @@ export async function importSupabaseProspects(companies: Company[], contacts: Co
   }
 
   return true;
+}
+
+async function loadSupabaseCommunicationLogs() {
+  if (!supabase) {
+    return [];
+  }
+
+  const result = await supabase.from("communication_logs").select("*").order("occurred_at", { ascending: false });
+
+  if (result.error) {
+    console.warn("[Blue Bomber Supabase] communication logs unavailable:", formatSupabaseError(result.error));
+    return [];
+  }
+
+  return ((result.data ?? []) as CommunicationLogRow[]).map(fromCommunicationLogRow);
 }
 
 async function loadSupabaseAccountFiles(accounts: Array<Pick<AccountFile, "accountId" | "accountType">>) {
@@ -551,6 +599,46 @@ function fromTaskRow(row: TaskRow): Task {
     sourceCompany: row.source_company,
     sourceNote: row.source_note,
     completedAt: row.completed_at ?? undefined
+  };
+}
+
+function toCommunicationLogRow(log: CommunicationLog): CommunicationLogRow {
+  return {
+    id: log.id,
+    company_id: log.entityType === "carrier" ? null : log.entityId,
+    carrier_id: log.entityType === "carrier" ? log.entityId : null,
+    entity_id: log.entityId,
+    entity_type: log.entityType,
+    direction: log.direction,
+    subject: log.subject,
+    contact_or_email: log.contactOrEmail || null,
+    occurred_at: log.occurredAt,
+    summary: log.summary || null,
+    follow_up_needed: log.followUpNeeded,
+    follow_up_action_text: log.followUpActionText || null,
+    follow_up_due_date: log.followUpDueDate || null,
+    source: log.source,
+    created_by: log.createdBy,
+    created_at: log.createdAt
+  };
+}
+
+function fromCommunicationLogRow(row: CommunicationLogRow): CommunicationLog {
+  return {
+    id: row.id,
+    entityId: row.entity_id ?? row.carrier_id ?? row.company_id ?? "",
+    entityType: row.entity_type,
+    direction: row.direction,
+    subject: row.subject,
+    contactOrEmail: row.contact_or_email ?? "",
+    occurredAt: row.occurred_at,
+    summary: row.summary ?? "",
+    followUpNeeded: row.follow_up_needed,
+    followUpActionText: row.follow_up_action_text ?? "",
+    followUpDueDate: row.follow_up_due_date ?? "",
+    source: row.source,
+    createdAt: row.created_at,
+    createdBy: row.created_by
   };
 }
 

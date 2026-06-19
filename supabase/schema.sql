@@ -72,3 +72,31 @@ create table if not exists timeline (
   occurred_at timestamptz not null default now(),
   created_at timestamptz not null default now()
 );
+
+
+create table if not exists communication_logs (
+  id uuid primary key default gen_random_uuid(),
+  company_id uuid references companies(id) on delete cascade,
+  carrier_id uuid references carriers(id) on delete cascade,
+  entity_id uuid not null,
+  entity_type text not null check (entity_type in ('prospect', 'customer', 'carrier')),
+  direction text not null check (direction in ('sent', 'received')),
+  subject text not null,
+  contact_or_email text,
+  occurred_at timestamptz not null default now(),
+  summary text,
+  follow_up_needed boolean not null default false,
+  follow_up_action_text text,
+  follow_up_due_date text,
+  source text not null check (source in ('Outlook', 'Gmail Operations')),
+  created_by text not null default 'System',
+  created_at timestamptz not null default now(),
+  check (
+    (entity_type in ('prospect', 'customer') and company_id is not null and carrier_id is null) or
+    (entity_type = 'carrier' and carrier_id is not null and company_id is null)
+  )
+);
+
+create index if not exists communication_logs_company_id_idx on communication_logs(company_id);
+create index if not exists communication_logs_carrier_id_idx on communication_logs(carrier_id);
+create index if not exists communication_logs_occurred_at_idx on communication_logs(occurred_at desc);
