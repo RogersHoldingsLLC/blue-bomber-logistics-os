@@ -1989,6 +1989,10 @@ button.company-preview:hover {
   grid-column: 1 / -1;
 }
 
+.email-paste-box {
+  min-height: 140px;
+}
+
 .manual-checkbox-row {
   align-items: center;
   display: flex;

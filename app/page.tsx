@@ -3815,6 +3815,7 @@ function ManualEmailLogForm({
   onSave: (values: ManualEmailLogInput) => void;
 }) {
   const today = new Date().toISOString().slice(0, 10);
+  const [pasteText, setPasteText] = useState("");
   const [direction, setDirection] = useState<CommunicationLog["direction"]>("sent");
   const [subject, setSubject] = useState("");
   const [contactOrEmail, setContactOrEmail] = useState("");
@@ -3823,6 +3824,25 @@ function ManualEmailLogForm({
   const [followUpNeeded, setFollowUpNeeded] = useState(false);
   const [followUpActionText, setFollowUpActionText] = useState("");
   const [followUpDueDate, setFollowUpDueDate] = useState("");
+
+  function parsePastedEmail() {
+    const parsedEmail = parseEmailPaste(pasteText, source);
+
+    if (parsedEmail.direction) {
+      setDirection(parsedEmail.direction);
+    }
+
+    setSubject(parsedEmail.subject || subject);
+    setContactOrEmail(parsedEmail.contactOrEmail || contactOrEmail);
+    setDate(parsedEmail.date || date);
+    setSummary(parsedEmail.summary || summary);
+
+    if (parsedEmail.followUpActionText) {
+      setFollowUpNeeded(true);
+      setFollowUpActionText(parsedEmail.followUpActionText);
+      setFollowUpDueDate(parsedEmail.followUpDueDate || followUpDueDate);
+    }
+  }
 
   function submitEmailLog() {
     if (!subject.trim()) {
@@ -3847,10 +3867,20 @@ function ManualEmailLogForm({
     setFollowUpNeeded(false);
     setFollowUpActionText("");
     setFollowUpDueDate("");
+    setPasteText("");
   }
 
   return (
     <div className="manual-form email-log-form" aria-label="Log email">
+      <textarea
+        className="email-paste-box"
+        value={pasteText}
+        onChange={(event) => setPasteText(event.target.value)}
+        placeholder="Paste Email Here"
+      />
+      <button className="secondary-action" disabled={!pasteText.trim()} type="button" onClick={parsePastedEmail}>
+        Parse Email
+      </button>
       <select
         value={direction}
         onChange={(event) => setDirection(event.target.value as CommunicationLog["direction"])}
@@ -3895,6 +3925,178 @@ function ManualEmailLogForm({
       </button>
     </div>
   );
+}
+
+function parseEmailPaste(rawText: string, source: CommunicationLog["source"]) {
+  const text = rawText.trim();
+  const headers = extractEmailHeaders(text);
+  const body = extractEmailBody(text, headers.headerLineCount);
+  const from = headers.from ?? "";
+  const to = headers.to ?? "";
+  const subject = headers.subject || firstMeaningfulLine(body) || "";
+  const contactOrEmail = extractContactOrEmail(source === "Outlook" ? from || to : from || to);
+  const direction = inferEmailDirection(from, to, source);
+  const date = parsePastedEmailDate(headers.date ?? headers.sent ?? "");
+  const summary = summarizePastedEmailBody(body || text);
+  const followUpActionText = suggestEmailFollowUp(summary || subject);
+
+  return {
+    direction,
+    subject,
+    contactOrEmail,
+    date,
+    summary,
+    followUpActionText,
+    followUpDueDate: followUpActionText ? "Today" : ""
+  };
+}
+
+function extractEmailHeaders(text: string) {
+  const headers: Record<string, string> = {};
+  const lines = text.split(/\r?\n/);
+  let headerLineCount = 0;
+  let currentHeader = "";
+
+  for (const line of lines) {
+    const match = line.match(/^(from|to|subject|sent|date|cc):\s*(.*)$/i);
+
+    if (match) {
+      currentHeader = match[1].toLowerCase();
+      headers[currentHeader] = match[2].trim();
+      headerLineCount += 1;
+      continue;
+    }
+
+    if (currentHeader && /^\s+/.test(line)) {
+      headers[currentHeader] = [headers[currentHeader], line.trim()].filter(Boolean).join(" ");
+      headerLineCount += 1;
+      continue;
+    }
+
+    if (line.trim() === "") {
+      headerLineCount += 1;
+      continue;
+    }
+
+    break;
+  }
+
+  return {
+    from: headers.from,
+    to: headers.to,
+    subject: headers.subject,
+    sent: headers.sent,
+    date: headers.date,
+    cc: headers.cc,
+    headerLineCount
+  };
+}
+
+function extractEmailBody(text: string, headerLineCount: number) {
+  const lines = text.split(/\r?\n/);
+
+  return lines
+    .slice(headerLineCount)
+    .join("\n")
+    .replace(/^[-_]{2,}.*$/gm, "")
+    .trim();
+}
+
+function firstMeaningfulLine(value: string) {
+  return value
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .find((line) => line.length > 0 && !/^(from|to|subject|sent|date|cc):/i.test(line)) ?? "";
+}
+
+function extractContactOrEmail(value: string) {
+  const emailMatch = value.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i);
+
+  if (emailMatch) {
+    return emailMatch[0];
+  }
+
+  return value.replace(/[<>]/g, "").trim();
+}
+
+function inferEmailDirection(from: string, to: string, source: CommunicationLog["source"]): CommunicationLog["direction"] | "" {
+  const userMailboxes = source === "Outlook"
+    ? ["brian@mcggrain.com", "louie@mcggrain.com"]
+    : ["operations@bluebomberlogistics.com"];
+  const normalizedFrom = from.toLowerCase();
+  const normalizedTo = to.toLowerCase();
+
+  if (userMailboxes.some((mailbox) => normalizedFrom.includes(mailbox))) {
+    return "sent";
+  }
+
+  if (userMailboxes.some((mailbox) => normalizedTo.includes(mailbox))) {
+    return "received";
+  }
+
+  return "";
+}
+
+function parsePastedEmailDate(value: string) {
+  if (!value.trim()) {
+    return "";
+  }
+
+  const parsedDate = new Date(value);
+
+  return Number.isNaN(parsedDate.getTime()) ? "" : parsedDate.toISOString().slice(0, 10);
+}
+
+function summarizePastedEmailBody(value: string) {
+  return value
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .slice(0, 6)
+    .join("\n");
+}
+
+function suggestEmailFollowUp(value: string) {
+  const normalizedValue = value.toLowerCase();
+  const trigger = [
+    "please update",
+    "need to",
+    "can you",
+    "follow up",
+    "send",
+    "resend",
+    "quote",
+    "bol",
+    "pod",
+    "coi",
+    "w9"
+  ].find((phrase) => normalizedValue.includes(phrase));
+
+  if (!trigger) {
+    return "";
+  }
+
+  if (normalizedValue.includes("coi")) {
+    return "Follow up on COI";
+  }
+
+  if (normalizedValue.includes("w9")) {
+    return "Follow up on W9";
+  }
+
+  if (normalizedValue.includes("pod")) {
+    return "Follow up on POD";
+  }
+
+  if (normalizedValue.includes("bol")) {
+    return "Follow up on BOL";
+  }
+
+  if (normalizedValue.includes("quote")) {
+    return "Follow up on quote";
+  }
+
+  return "Follow up on email";
 }
 
 function FileCabinet({
