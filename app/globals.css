@@ -214,9 +214,10 @@ button {
 
 .brand-logo {
   display: block;
-  height: 42px;
+  height: 46px;
   object-fit: contain;
-  width: 184px;
+  object-position: left center;
+  width: 230px;
 }
 
 .login-logo {
@@ -2333,8 +2334,8 @@ textarea:focus-visible {
 }
 
 .brand-logo {
-  height: 48px;
-  width: 214px;
+  height: 50px;
+  width: 244px;
 }
 
 .global-search input,
@@ -2940,6 +2941,111 @@ textarea:focus {
 .smart-note-modal,
 .manual-entry-panel {
   box-shadow: var(--shadow-soft);
+}
+
+
+
+/* Final executive demo readiness polish */
+.manual-entry-toggle {
+  background: var(--accent-soft);
+  border-color: var(--accent-line);
+  color: var(--accent);
+  font-weight: 900;
+  letter-spacing: 0.01em;
+}
+
+.account-card-manual-entry,
+.carrier-manual-entry {
+  background: linear-gradient(180deg, var(--surface-raised) 0%, var(--surface) 100%);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px;
+}
+
+.manual-entry-panel {
+  background: var(--surface);
+  border-color: var(--accent-line);
+  border-radius: 10px;
+  padding: 10px;
+}
+
+.manual-entry-options {
+  gap: 8px;
+}
+
+.manual-entry-options button {
+  align-items: center;
+  background: var(--surface-raised);
+  border-color: var(--border);
+  border-radius: 8px;
+  display: inline-flex;
+  font-size: 12px;
+  justify-content: center;
+  min-height: 34px;
+  padding: 0 11px;
+}
+
+.manual-entry-options button:hover {
+  background: var(--accent-soft);
+  border-color: var(--accent-line);
+  color: var(--accent);
+}
+
+.account-summary-empty {
+  background: var(--surface-raised);
+  border: 1px dashed var(--border-strong);
+  border-radius: 10px;
+  color: var(--muted);
+  font-size: 14px;
+  font-weight: 700;
+  margin: 4px 16px 16px;
+  padding: 14px;
+}
+
+.app-footer {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+  padding: 18px 4px 4px;
+  text-align: center;
+}
+
+.profile-header {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: var(--shadow-soft);
+  margin-bottom: 14px;
+  padding: 16px;
+}
+
+.profile-header h2 {
+  font-size: 26px;
+  letter-spacing: -0.015em;
+}
+
+.profile-header p {
+  color: var(--muted);
+  font-weight: 700;
+  margin-top: 4px;
+}
+
+.carrier-manual-entry {
+  margin-bottom: 14px;
+}
+
+.timeline-email .timeline-icon {
+  color: #5c6fb0;
+}
+
+.timeline-file .timeline-icon {
+  color: #7a60b8;
+}
+
+.timeline-action .timeline-icon,
+.task-event .timeline-icon {
+  color: var(--success-text);
 }
 
 

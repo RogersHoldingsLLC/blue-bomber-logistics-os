@@ -1,23 +1,23 @@
-import type { Carrier, Company, Contact, Task, TimelineEntry } from "@/types";
+import type { AccountFile, Carrier, CommunicationLog, Company, Contact, Task, TimelineEntry } from "@/types";
 
 export const qualifyingQuestions = [
-  "Who handles purchasing?",
-  "What are you currently buying?",
-  "Who is your current supplier?",
-  "What challenges are you experiencing?",
-  "When would you consider evaluating alternatives?"
+  "What do they ship?",
+  "Where do they ship?",
+  "How often do they ship?",
+  "Who handles freight decisions?",
+  "What is the next opportunity?"
 ] as const;
 
 export const companies: Company[] = [
   {
     id: "11111111-1111-4111-8111-111111111111",
-    name: "Midwest Cold Storage",
+    name: "Hirata Corporation",
     status: "prospect",
-    city: "Columbus",
-    state: "OH",
-    segment: "Cold storage",
-    currentOpportunity: "Weekly dry van lanes from Columbus to Nashville.",
-    smartNotes: "Purchasing wants fewer missed pickup windows. Follow up after rate review.",
+    city: "New Hudson",
+    state: "MI",
+    segment: "Automotive manufacturing",
+    currentOpportunity: "Quote production freight from Lexington, KY to New York, NY and evaluate recurring automotive parts lanes.",
+    smartNotes: "Spoke with Cheri about the last load. Service was rough, but they have another shipment coming up and need clean BOL support.",
     salesLead: "Louie",
     operationsLead: "Brian",
     primaryContactId: "11111111-1111-4111-8111-111111111101",
@@ -25,22 +25,22 @@ export const companies: Company[] = [
     lastActivity: "Today",
     active: true,
     qualifyingQuestions: {
-      "Who handles purchasing?": "Dana Ellis, Operations Purchasing",
-      "What are you currently buying?": "Dry van and reefer spot freight",
-      "Who is your current supplier?": "Regional broker mix",
-      "What challenges are you experiencing?": "Late pickups and poor update cadence",
-      "When would you consider evaluating alternatives?": "After the current month closes"
+      "What do they ship?": "Automotive parts, production equipment, and plant materials.",
+      "Where do they ship?": "Michigan, Kentucky, New York, and supplier locations across the Midwest.",
+      "How often do they ship?": "Several spot loads per month with potential weekly production freight.",
+      "Who handles freight decisions?": "Cheri Parker coordinates traffic; Eric Boyd supports shipping decisions.",
+      "What is the next opportunity?": "Quote Lexington to New York and prove follow-up reliability."
     }
   },
   {
     id: "22222222-2222-4222-8222-222222222222",
-    name: "Lakefront Building Supply",
-    status: "prospect",
-    city: "Erie",
-    state: "PA",
-    segment: "Building materials",
-    currentOpportunity: "Flatbed capacity for two recurring inbound lanes.",
-    smartNotes: "Needs fast check-ins, not a long sales pitch.",
+    name: "Gate Precast",
+    status: "customer",
+    city: "Winchester",
+    state: "KY",
+    segment: "Precast concrete",
+    currentOpportunity: "Active flatbed and step deck support for Midwest project deliveries.",
+    smartNotes: "Project team likes quick updates, clear POD follow-through, and early carrier confirmation before crane windows.",
     salesLead: "Louie",
     operationsLead: "Brian",
     primaryContactId: "22222222-2222-4222-8222-222222222201",
@@ -48,34 +48,11 @@ export const companies: Company[] = [
     lastActivity: "Yesterday",
     active: true,
     qualifyingQuestions: {
-      "Who handles purchasing?": "Marcus Clay",
-      "What are you currently buying?": "Flatbed and step deck moves",
-      "Who is your current supplier?": "Incumbent asset carrier",
-      "What challenges are you experiencing?": "Capacity gets tight at month end",
-      "When would you consider evaluating alternatives?": "If service slips again"
-    }
-  },
-  {
-    id: "33333333-3333-4333-8333-333333333333",
-    name: "Riverside Foods",
-    status: "customer",
-    city: "Louisville",
-    state: "KY",
-    segment: "Food manufacturing",
-    currentOpportunity: "Add one outbound lane to the existing weekly schedule.",
-    smartNotes: "Customer likes concise summaries and shipment exceptions only.",
-    salesLead: "Louie",
-    operationsLead: "Brian",
-    primaryContactId: "33333333-3333-4333-8333-333333333301",
-    lastContact: "Monday",
-    lastActivity: "Monday",
-    active: true,
-    qualifyingQuestions: {
-      "Who handles purchasing?": "Nina Patel",
-      "What are you currently buying?": "Reefer freight and seasonal overflow",
-      "Who is your current supplier?": "Blue Bomber plus two backup brokers",
-      "What challenges are you experiencing?": "Seasonal surges",
-      "When would you consider evaluating alternatives?": "Already evaluating overflow options"
+      "What do they ship?": "Precast wall panels, forms, and project materials.",
+      "Where do they ship?": "Kentucky, Indiana, Ohio, Tennessee, and job sites across the Midwest.",
+      "How often do they ship?": "Multiple loads per week during active projects.",
+      "Who handles freight decisions?": "Megan Roberts manages logistics; Tom Harris coordinates job-site receiving.",
+      "What is the next opportunity?": "Secure reliable flatbed capacity for the Indianapolis project schedule."
     }
   }
 ];
@@ -84,69 +61,70 @@ export const contacts: Contact[] = [
   {
     id: "11111111-1111-4111-8111-111111111101",
     companyId: "11111111-1111-4111-8111-111111111111",
-    name: "Dana Ellis",
-    role: "Operations Purchasing",
-    email: "dana@midwestcold.example",
-    phone: "(614) 555-0144",
-    lastContact: "Today"
+    name: "Cheri Parker",
+    role: "Traffic Manager",
+    email: "cheri.parker@hirata.example",
+    phone: "(248) 555-0148",
+    lastContact: "Today",
+    source: "Demo Data",
+    createdBy: "Brian",
+    confidence: "High"
   },
   {
     id: "11111111-1111-4111-8111-111111111102",
     companyId: "11111111-1111-4111-8111-111111111111",
-    name: "Rob Miller",
-    role: "Shipping Manager",
-    email: "rob@midwestcold.example",
-    phone: "(614) 555-0180"
+    name: "Eric Boyd",
+    role: "Shipping",
+    email: "eric.boyd@hirata.example",
+    phone: "(248) 555-0191",
+    source: "Demo Data",
+    createdBy: "Brian",
+    confidence: "High"
   },
   {
     id: "11111111-1111-4111-8111-111111111103",
     companyId: "11111111-1111-4111-8111-111111111111",
-    name: "Tess Grant",
-    role: "Accounts Payable",
-    email: "tess@midwestcold.example",
-    phone: "(614) 555-0128"
+    name: "Aaron Mills",
+    role: "Receiving",
+    email: "aaron.mills@hirata.example",
+    phone: "(248) 555-0174",
+    source: "Demo Data",
+    createdBy: "Louie",
+    confidence: "High"
   },
   {
     id: "22222222-2222-4222-8222-222222222201",
     companyId: "22222222-2222-4222-8222-222222222222",
-    name: "Marcus Clay",
-    role: "Purchasing Lead",
-    email: "marcus@lakefront.example",
-    phone: "(814) 555-0162",
-    lastContact: "Yesterday"
+    name: "Megan Roberts",
+    role: "Logistics Coordinator",
+    email: "megan.roberts@gateprecast.example",
+    phone: "(859) 555-0119",
+    lastContact: "Yesterday",
+    source: "Demo Data",
+    createdBy: "Louie",
+    confidence: "High"
   },
   {
     id: "22222222-2222-4222-8222-222222222202",
     companyId: "22222222-2222-4222-8222-222222222222",
-    name: "Sarah James",
-    role: "Warehouse Manager",
-    email: "sarah@lakefront.example",
-    phone: "(814) 555-0169"
+    name: "Tom Harris",
+    role: "Project Manager",
+    email: "tom.harris@gateprecast.example",
+    phone: "(859) 555-0127",
+    source: "Demo Data",
+    createdBy: "Brian",
+    confidence: "High"
   },
   {
-    id: "33333333-3333-4333-8333-333333333301",
-    companyId: "33333333-3333-4333-8333-333333333333",
-    name: "Nina Patel",
-    role: "Logistics Director",
-    email: "nina@riverside.example",
-    phone: "(502) 555-0118",
-    lastContact: "Monday"
-  },
-  {
-    id: "33333333-3333-4333-8333-333333333302",
-    companyId: "33333333-3333-4333-8333-333333333333",
-    name: "Owen Fox",
-    role: "Plant Manager",
-    email: "owen@riverside.example",
-    phone: "(502) 555-0122"
-  },
-  {
-    id: "33333333-3333-4333-8333-333333333303",
-    companyId: "33333333-3333-4333-8333-333333333333",
-    name: "Maria Lopez",
+    id: "22222222-2222-4222-8222-222222222203",
+    companyId: "22222222-2222-4222-8222-222222222222",
+    name: "Angela Reed",
     role: "Accounts Payable",
-    email: "maria@riverside.example",
-    phone: "(502) 555-0151"
+    email: "angela.reed@gateprecast.example",
+    phone: "(859) 555-0165",
+    source: "Demo Data",
+    createdBy: "Louie",
+    confidence: "High"
   }
 ];
 
@@ -156,77 +134,101 @@ export const tasks: Task[] = [
     companyId: "11111111-1111-4111-8111-111111111111",
     entityId: "11111111-1111-4111-8111-111111111111",
     entityType: "prospect",
-    title: "Send Columbus to Nashville lane estimate",
-    due: "Today",
+    title: "Quote Load: Lexington KY to New York NY",
+    due: "Today 10:00 AM",
     priority: "high",
     status: "open",
-    createdAt: "2026-06-08T09:00:00.000Z",
+    createdAt: "2026-06-18T09:00:00.000Z",
     owner: "Louie",
-    createdBy: "System",
-    sourceCompany: "Midwest Cold Storage",
-    sourceNote: "Initial lane estimate needed for Columbus to Nashville."
+    createdBy: "Louie",
+    sourceCompany: "Hirata Corporation",
+    sourceNote: "Need to quote load from Lexington KY to New York NY."
   },
   {
     id: "44444444-4444-4444-8444-444444444402",
-    companyId: "22222222-2222-4222-8222-222222222222",
-    entityId: "22222222-2222-4222-8222-222222222222",
-    entityType: "prospect",
-    title: "Call Marcus about month-end flatbed needs",
-    due: "Tomorrow",
-    priority: "normal",
-    status: "open",
-    createdAt: "2026-06-09T10:30:00.000Z",
-    owner: "Louie",
-    createdBy: "System",
-    sourceCompany: "Lakefront Building Supply",
-    sourceNote: "Marcus has month-end flatbed needs."
-  },
-  {
-    id: "44444444-4444-4444-8444-444444444403",
-    companyId: "33333333-3333-4333-8333-333333333333",
-    entityId: "33333333-3333-4333-8333-333333333333",
-    entityType: "customer",
-    title: "Confirm next outbound pickup schedule",
-    due: "Friday",
-    priority: "normal",
-    status: "open",
-    createdAt: "2026-06-10T14:00:00.000Z",
-    owner: "Louie",
-    createdBy: "System",
-    sourceCompany: "Riverside Foods",
-    sourceNote: "Confirm next outbound pickup schedule."
-  },
-  {
-    id: "44444444-4444-4444-8444-444444444404",
     companyId: "11111111-1111-4111-8111-111111111111",
     entityId: "11111111-1111-4111-8111-111111111111",
     entityType: "prospect",
-    title: "Confirm Dana approved service cadence",
-    due: "Next",
+    title: "Make BOL for Cheri",
+    due: "Today 2:00 PM",
+    priority: "high",
+    status: "open",
+    createdAt: "2026-06-18T10:15:00.000Z",
+    owner: "Louie",
+    createdBy: "Louie",
+    sourceCompany: "Hirata Corporation",
+    sourceNote: "Need to make BOL for Cheri asap."
+  },
+  {
+    id: "44444444-4444-4444-8444-444444444403",
+    companyId: "22222222-2222-4222-8222-222222222222",
+    entityId: "22222222-2222-4222-8222-222222222222",
+    entityType: "customer",
+    title: "Confirm Indianapolis flatbed capacity",
+    due: "Today 11:30 AM",
     priority: "normal",
     status: "open",
-    createdAt: "2026-06-11T08:00:00.000Z",
+    createdAt: "2026-06-18T08:20:00.000Z",
     owner: "Brian",
-    createdBy: "System",
-    sourceCompany: "Midwest Cold Storage",
-    sourceNote: "Confirm Dana approved service cadence."
+    createdBy: "Brian",
+    sourceCompany: "Gate Precast",
+    sourceNote: "Need carrier base for Indianapolis job-site deliveries."
+  },
+  {
+    id: "44444444-4444-4444-8444-444444444404",
+    companyId: "22222222-2222-4222-8222-222222222222",
+    entityId: "22222222-2222-4222-8222-222222222222",
+    entityType: "customer",
+    title: "Send POD package to Megan",
+    due: "Completed",
+    priority: "normal",
+    status: "completed",
+    completedAt: "2026-06-18T15:40:00.000Z",
+    createdAt: "2026-06-17T13:30:00.000Z",
+    owner: "Louie",
+    createdBy: "Louie",
+    sourceCompany: "Gate Precast",
+    sourceNote: "Megan requested POD package for last week's delivery."
+  },
+  {
+    id: "44444444-4444-4444-8444-444444444405",
+    companyId: "55555555-5555-4555-8555-555555555501",
+    entityId: "55555555-5555-4555-8555-555555555501",
+    entityType: "carrier",
+    title: "Get Updated COI",
+    due: "Today 3:00 PM",
+    priority: "high",
+    status: "open",
+    createdAt: "2026-06-18T11:00:00.000Z",
+    owner: "Brian",
+    createdBy: "Brian",
+    sourceCompany: "ABC Transport",
+    sourceNote: "Need COI before assigning project freight."
+  },
+  {
+    id: "44444444-4444-4444-8444-444444444406",
+    companyId: "55555555-5555-4555-8555-555555555501",
+    entityId: "55555555-5555-4555-8555-555555555501",
+    entityType: "carrier",
+    title: "Get W9",
+    due: "Tomorrow",
+    priority: "normal",
+    status: "open",
+    createdAt: "2026-06-18T11:10:00.000Z",
+    owner: "Brian",
+    createdBy: "Brian",
+    sourceCompany: "ABC Transport",
+    sourceNote: "Need W9 for carrier packet."
   }
 ];
 
 export const carriers: Carrier[] = [
   {
     id: "55555555-5555-4555-8555-555555555501",
-    name: "Buckeye Transport",
-    city: "Dayton",
-    state: "OH",
-    equipment: "Dry van"
-  },
-  {
-    id: "55555555-5555-4555-8555-555555555502",
-    name: "Bluegrass Flatbed",
-    city: "Lexington",
-    state: "KY",
-    equipment: "Flatbed"
+    name: "ABC Transport",
+    city: "Indianapolis",
+    state: "IN",
+    equipment: "Dry van, flatbed, step deck | Packet pending COI and W9"
   }
 ];
 
@@ -235,21 +237,157 @@ export const timeline: TimelineEntry[] = [
     id: "66666666-6666-4666-8666-666666666601",
     companyId: "11111111-1111-4111-8111-111111111111",
     at: "Today",
-    body: "Dana asked for a tighter pickup communication process.",
-    createdAt: "2026-06-11T09:00:00.000Z"
+    body: "Spoke with Cheri Parker. Prior load had service issues, but Hirata is open to quoting the next Lexington to New York shipment.",
+    createdAt: "2026-06-18T09:15:00.000Z"
   },
   {
     id: "66666666-6666-4666-8666-666666666602",
-    companyId: "22222222-2222-4222-8222-222222222222",
-    at: "Yesterday",
-    body: "Marcus shared two possible recurring flatbed lanes.",
-    createdAt: "2026-06-10T10:30:00.000Z"
+    companyId: "11111111-1111-4111-8111-111111111111",
+    at: "Today",
+    body: "Action Created: Make BOL for Cheri\nOwner: Louie\nDue: Today 2:00 PM",
+    createdAt: "2026-06-18T10:15:00.000Z"
   },
   {
     id: "66666666-6666-4666-8666-666666666603",
-    companyId: "33333333-3333-4333-8333-333333333333",
+    companyId: "22222222-2222-4222-8222-222222222222",
+    at: "Yesterday",
+    body: "Megan confirmed Gate Precast needs flatbed coverage for the Indianapolis project and wants proactive pickup updates.",
+    createdAt: "2026-06-17T13:10:00.000Z"
+  },
+  {
+    id: "66666666-6666-4666-8666-666666666604",
+    companyId: "22222222-2222-4222-8222-222222222222",
+    at: "Yesterday",
+    body: "Action Completed: Send POD package to Megan\nCompleted by Louie\n06/18/2026 3:40 PM",
+    createdAt: "2026-06-18T15:40:00.000Z"
+  },
+  {
+    id: "66666666-6666-4666-8666-666666666605",
+    companyId: "22222222-2222-4222-8222-222222222222",
     at: "Monday",
-    body: "Nina requested overflow pricing before peak volume.",
-    createdAt: "2026-06-08T14:15:00.000Z"
+    body: "File Added: Gate Precast rate confirmation packet.",
+    createdAt: "2026-06-16T12:00:00.000Z"
+  }
+];
+
+export const communicationLogs: CommunicationLog[] = [
+  {
+    id: "77777777-7777-4777-8777-777777777701",
+    entityId: "11111111-1111-4111-8111-111111111111",
+    entityType: "prospect",
+    direction: "received",
+    subject: "Lexington to New York quote request",
+    contactOrEmail: "Cheri Parker <cheri.parker@hirata.example>",
+    occurredAt: "2026-06-18T09:30:00.000Z",
+    summary: "Cheri asked for pricing and BOL support for the next load.",
+    followUpNeeded: true,
+    followUpActionText: "Quote Load: Lexington KY to New York NY",
+    followUpDueDate: "Today",
+    source: "Outlook",
+    createdAt: "2026-06-18T09:32:00.000Z",
+    createdBy: "Louie"
+  },
+  {
+    id: "77777777-7777-4777-8777-777777777702",
+    entityId: "22222222-2222-4222-8222-222222222222",
+    entityType: "customer",
+    direction: "sent",
+    subject: "POD package and project update",
+    contactOrEmail: "Megan Roberts <megan.roberts@gateprecast.example>",
+    occurredAt: "2026-06-18T15:35:00.000Z",
+    summary: "Sent POD package and confirmed next project freight schedule.",
+    followUpNeeded: false,
+    followUpActionText: "",
+    followUpDueDate: "",
+    source: "Outlook",
+    createdAt: "2026-06-18T15:36:00.000Z",
+    createdBy: "Louie"
+  },
+  {
+    id: "77777777-7777-4777-8777-777777777703",
+    entityId: "55555555-5555-4555-8555-555555555501",
+    entityType: "carrier",
+    direction: "received",
+    subject: "Carrier packet documents",
+    contactOrEmail: "dispatch@abctransport.example",
+    occurredAt: "2026-06-18T11:20:00.000Z",
+    summary: "ABC Transport sent packet details; COI and W9 still need to be collected.",
+    followUpNeeded: true,
+    followUpActionText: "Get Updated COI",
+    followUpDueDate: "Today",
+    source: "Gmail Operations",
+    createdAt: "2026-06-18T11:25:00.000Z",
+    createdBy: "Brian"
+  }
+];
+
+export const files: AccountFile[] = [
+  {
+    id: "demo-gate-rate-confirmation",
+    accountId: "22222222-2222-4222-8222-222222222222",
+    accountType: "company",
+    provider: "google_drive",
+    category: "Rate Confirmations",
+    name: "Gate Precast - Indianapolis Rate Confirmation.pdf",
+    path: "demo-gate-rate-confirmation",
+    size: 284000,
+    mimeType: "application/pdf",
+    uploadedAt: "2026-06-16T12:00:00.000Z",
+    uploadedBy: "Brian",
+    googleDriveFileId: "demo-gate-rate-confirmation",
+    googleDriveFolderId: "demo-gate-folder",
+    googleDriveWebViewLink: "https://drive.google.com/",
+    googleDriveWebContentLink: "https://drive.google.com/"
+  },
+  {
+    id: "demo-gate-pod-package",
+    accountId: "22222222-2222-4222-8222-222222222222",
+    accountType: "company",
+    provider: "google_drive",
+    category: "PODs",
+    name: "Gate Precast - POD Package.pdf",
+    path: "demo-gate-pod-package",
+    size: 176000,
+    mimeType: "application/pdf",
+    uploadedAt: "2026-06-18T15:35:00.000Z",
+    uploadedBy: "Louie",
+    googleDriveFileId: "demo-gate-pod-package",
+    googleDriveFolderId: "demo-gate-folder",
+    googleDriveWebViewLink: "https://drive.google.com/",
+    googleDriveWebContentLink: "https://drive.google.com/"
+  },
+  {
+    id: "demo-abc-coi",
+    accountId: "55555555-5555-4555-8555-555555555501",
+    accountType: "carrier",
+    provider: "google_drive",
+    category: "COIs",
+    name: "ABC Transport - COI Pending.pdf",
+    path: "demo-abc-coi",
+    size: 98000,
+    mimeType: "application/pdf",
+    uploadedAt: "2026-06-18T11:20:00.000Z",
+    uploadedBy: "Brian",
+    googleDriveFileId: "demo-abc-coi",
+    googleDriveFolderId: "demo-abc-folder",
+    googleDriveWebViewLink: "https://drive.google.com/",
+    googleDriveWebContentLink: "https://drive.google.com/"
+  },
+  {
+    id: "demo-abc-w9",
+    accountId: "55555555-5555-4555-8555-555555555501",
+    accountType: "carrier",
+    provider: "google_drive",
+    category: "W9s",
+    name: "ABC Transport - W9 Requested.pdf",
+    path: "demo-abc-w9",
+    size: 76000,
+    mimeType: "application/pdf",
+    uploadedAt: "2026-06-18T11:22:00.000Z",
+    uploadedBy: "Brian",
+    googleDriveFileId: "demo-abc-w9",
+    googleDriveFolderId: "demo-abc-folder",
+    googleDriveWebViewLink: "https://drive.google.com/",
+    googleDriveWebContentLink: "https://drive.google.com/"
   }
 ];

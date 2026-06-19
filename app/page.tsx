@@ -5,8 +5,10 @@ import type { User } from "@supabase/supabase-js";
 import * as XLSX from "xlsx";
 import {
   carriers as seedCarriers,
+  communicationLogs as seedCommunicationLogs,
   companies as seedCompanies,
   contacts as seedContacts,
+  files as seedFiles,
   qualifyingQuestions,
   tasks as seedTasks,
   timeline as seedTimeline
@@ -407,8 +409,8 @@ export default function Home() {
   const [tasks, setTasks] = useState(seedTasks);
   const [timeline, setTimeline] = useState(seedTimeline);
   const [carrierItems, setCarrierItems] = useState(seedCarriers);
-  const [files, setFiles] = useState<AccountFile[]>([]);
-  const [communicationLogs, setCommunicationLogs] = useState<CommunicationLog[]>([]);
+  const [files, setFiles] = useState<AccountFile[]>(seedFiles);
+  const [communicationLogs, setCommunicationLogs] = useState<CommunicationLog[]>(seedCommunicationLogs);
   const [hasHydratedStorage, setHasHydratedStorage] = useState(false);
   const [selectedCompanyId, setSelectedCompanyId] = useState<string | null>(null);
   const [selectedCarrierId, setSelectedCarrierId] = useState<string | null>(null);
@@ -2691,6 +2693,8 @@ export default function Home() {
         </>
       ) : null}
 
+      <footer className="app-footer">Blue Bomber OS v1.0</footer>
+
       {smartNoteReview ? (
         <SmartNoteReviewModal
           review={smartNoteReview}
@@ -3276,7 +3280,7 @@ function CarrierProfile({
             setManualPanel(null);
           }}
         >
-          Manual Entry
+          Operations Center
         </button>
         {isManualEntryOpen ? (
           <div className="manual-entry-panel">
@@ -3491,7 +3495,7 @@ function CompanyProfile({
       }
 
       const previewText = [
-        "Replace Account Summary with this AI refresh?",
+        "Replace AI Account Brief with this AI refresh?",
         "",
         ...payload.bullets.map((bullet) => "- " + bullet)
       ].join("\n");
@@ -3652,7 +3656,7 @@ function CompanyProfile({
                 setManualPanel(null);
               }}
             >
-              Manual Entry
+              Operations Center
             </button>
             {isManualEntryOpen ? (
               <div className="manual-entry-panel">
@@ -3710,19 +3714,23 @@ function CompanyProfile({
         </section>
 
         <div className="profile-side-column">
-          <section className="account-summary" aria-label="Account Summary">
+          <section className="account-summary" aria-label="AI Account Brief">
             <div className="account-summary-header">
-              <h3>Account Summary</h3>
+              <h3>AI Account Brief</h3>
               <button className="secondary-action" disabled={isRefreshingSummary} type="button" onClick={() => void refreshAccountSummary()}>
                 {isRefreshingSummary ? "Refreshing" : "AI Refresh Summary"}
               </button>
             </div>
             {summaryRefreshError ? <p className="error-text">{summaryRefreshError}</p> : null}
-            <ul className="account-summary-list">
-              {accountSummary.map((sentence) => (
-                <li key={sentence}>{sentence}</li>
-              ))}
-            </ul>
+            {accountSummary.length ? (
+              <ul className="account-summary-list">
+                {accountSummary.map((sentence) => (
+                  <li key={sentence}>{sentence}</li>
+                ))}
+              </ul>
+            ) : (
+              <p className="account-summary-empty">No operational intelligence available yet.</p>
+            )}
           </section>
 
           <section className="louie-questions-card" aria-label="Louie's Qualifying Questions">
@@ -5396,7 +5404,7 @@ function TaskDashboard({
     return (
       <div className="empty-state action-empty-state">
         <strong>No actions due in this view.</strong>
-        <span>Use Call Notes or Manual Entry when new work comes in.</span>
+        <span>Use Call Notes or Operations Center when new work comes in.</span>
       </div>
     );
   }
