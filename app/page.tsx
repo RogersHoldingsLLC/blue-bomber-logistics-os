@@ -2236,7 +2236,7 @@ export default function Home() {
       <section className="topbar" aria-label="Home">
         <div>
           <div className="brand-lockup">
-            <img className="brand-logo" src="/blue-bomber-logo.png" alt="Blue Bomber Logistics" />
+            <img className="brand-logo" src="/blue-bomber-logo.svg" alt="Blue Bomber Logistics" />
           </div>
         </div>
         <div className="topbar-actions">
@@ -2744,7 +2744,7 @@ function LoginScreen({
   return (
     <main className="login-shell">
       <section className="login-card" aria-label="Login">
-        <img className="login-logo" src="/blue-bomber-logo.png" alt="Blue Bomber Logistics" />
+        <img className="login-logo" src="/blue-bomber-logo.svg" alt="Blue Bomber Logistics" />
         <h1>Blue Bomber Logistics OS</h1>
         <p>Operations Command Center</p>
         <form onSubmit={submitLogin}>

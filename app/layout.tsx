@@ -6,9 +6,9 @@ export const metadata: Metadata = {
   title: "Blue Bomber OS",
   description: "Operations command center for Blue Bomber Logistics",
   icons: {
-    icon: "/favicon.png",
-    shortcut: "/favicon.png",
-    apple: "/blue-bomber-app-icon.png"
+    icon: "/favicon.ico",
+    shortcut: "/favicon.ico",
+    apple: "/apple-touch-icon.png"
   },
   openGraph: {
     title: "Blue Bomber OS",
