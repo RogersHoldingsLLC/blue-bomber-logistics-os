@@ -44,15 +44,35 @@ export type TimelineEntry = {
   createdAt: string;
 };
 
+export type AccountFileProvider = "google_drive" | "supabase_storage";
+export type AccountFileCategory =
+  | "BOLs"
+  | "PODs"
+  | "Rate Confirmations"
+  | "COIs"
+  | "Invoices"
+  | "W9s"
+  | "NOAs"
+  | "Carrier Packets"
+  | "Misc";
+
 export type AccountFile = {
   id: string;
   accountId: string;
   accountType: "company" | "carrier";
+  provider: AccountFileProvider;
+  category: AccountFileCategory;
   name: string;
   path: string;
   size: number;
+  mimeType: string;
   uploadedAt: string;
   uploadedBy: string;
+  googleDriveFileId?: string;
+  googleDriveFolderId?: string;
+  googleDriveWebViewLink?: string;
+  googleDriveWebContentLink?: string;
+  supabaseStoragePath?: string;
 };
 
 export type CommunicationLog = {

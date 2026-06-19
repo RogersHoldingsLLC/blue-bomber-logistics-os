@@ -20,12 +20,11 @@ import {
   importSupabaseProspects,
   createSupabaseAccountFileSignedUrl,
   loadSupabaseState,
-  saveSupabaseState,
-  uploadSupabaseAccountFile
+  saveSupabaseState
 } from "@/lib/supabase-storage";
 import { createUuid } from "@/lib/uuid";
 import { supabase } from "@/lib/supabase";
-import type { AccountFile, Carrier, CommunicationLog, Company, CompanyStatus, Contact, Task, TimelineEntry } from "@/types";
+import type { AccountFile, AccountFileCategory, Carrier, CommunicationLog, Company, CompanyStatus, Contact, Task, TimelineEntry } from "@/types";
 
 type AppRole = "Admin" | "Operations";
 type AppUser = {
@@ -1741,17 +1740,39 @@ export default function Home() {
     });
   }
 
-  async function uploadAccountFile(accountId: string, accountType: AccountFile["accountType"], file: File) {
+  async function uploadAccountFile(
+    accountId: string,
+    accountType: AccountFile["accountType"],
+    file: File,
+    category: AccountFileCategory
+  ) {
     setFileCabinetError("");
 
     try {
-      const uploadedFile = await uploadSupabaseAccountFile({
-        accountId,
-        accountType,
-        file,
-        uploadedBy: currentUserName
+      const account = accountType === "carrier"
+        ? carrierItems.find((carrier) => carrier.id === accountId)
+        : companies.find((company) => company.id === accountId);
+      const formData = new FormData();
+
+      formData.append("file", file);
+      formData.append("accountId", accountId);
+      formData.append("accountType", accountType);
+      formData.append("accountName", account?.name ?? "Unknown Account");
+      formData.append("accountStatus", accountType === "carrier" ? "carrier" : (account as Company | undefined)?.status ?? "prospect");
+      formData.append("category", category);
+      formData.append("uploadedBy", currentUserName);
+
+      const response = await fetch("/api/file-cabinet/upload", {
+        method: "POST",
+        body: formData
       });
-      const nextFiles = [uploadedFile, ...files];
+      const payload = (await response.json()) as { file?: AccountFile; error?: string };
+
+      if (!response.ok || !payload.file) {
+        throw new Error(payload.error || "File upload failed.");
+      }
+
+      const nextFiles = [payload.file, ...files.filter((existingFile) => existingFile.id !== payload.file?.id)];
 
       setFiles(nextFiles);
       persistState({ files: nextFiles }, "uploading account file");
@@ -1767,12 +1788,21 @@ export default function Home() {
     setFileCabinetError("");
 
     try {
-      const signedUrl = await createSupabaseAccountFileSignedUrl(file, download);
-      const openedWindow = window.open(signedUrl, "_blank", "noopener,noreferrer");
+      const fileUrl = file.provider === "google_drive"
+        ? download
+          ? file.googleDriveWebContentLink || file.googleDriveWebViewLink
+          : file.googleDriveWebViewLink || file.googleDriveWebContentLink
+        : await createSupabaseAccountFileSignedUrl(file, download);
+
+      if (!fileUrl) {
+        throw new Error("Could not open file. Check Google Drive file permissions.");
+      }
+
+      const openedWindow = window.open(fileUrl, "_blank", "noopener,noreferrer");
 
       if (!openedWindow) {
         const link = document.createElement("a");
-        link.href = signedUrl;
+        link.href = fileUrl;
         link.target = "_blank";
         link.rel = "noreferrer";
 
@@ -2559,7 +2589,7 @@ export default function Home() {
                 return nextCompanies;
               });
             }}
-            onUploadFile={(file) => void uploadAccountFile(selectedCompany.id, "company", file)}
+            onUploadFile={(file, category) => void uploadAccountFile(selectedCompany.id, "company", file, category)}
             onOpenFile={(file, download) => void openAccountFile(file, download)}
             onSmartNotesChange={(smartNotes) => {
               setCompanies((currentCompanies) => {
@@ -2654,7 +2684,7 @@ export default function Home() {
               window.setTimeout(() => setNoteResult(null), 5000);
             }}
             onNoteChange={setCarrierNote}
-            onUploadFile={(file) => void uploadAccountFile(selectedCarrier.id, "carrier", file)}
+            onUploadFile={(file, category) => void uploadAccountFile(selectedCarrier.id, "carrier", file, category)}
             onOpenFile={(file, download) => void openAccountFile(file, download)}
             onLogEmail={(values) => logCarrierEmail(selectedCarrier, values)}
           />
@@ -3213,7 +3243,7 @@ function CarrierProfile({
   tasks: Task[];
   onAddNote: () => void;
   onNoteChange: (note: string) => void;
-  onUploadFile: (file: File) => void;
+  onUploadFile: (file: File, category: AccountFileCategory) => void;
   onOpenFile: (file: AccountFile, download?: boolean) => void;
   onLogEmail: (values: ManualEmailLogInput) => void;
 }) {
@@ -3302,6 +3332,7 @@ Confirm delivery`}
             <span>Carrier Details</span>
             <strong>{carrier.equipment}</strong>
             <FileCabinet
+              accountType="carrier"
               files={files}
               fileCabinetError={fileCabinetError}
               onOpenFile={onOpenFile}
@@ -3382,7 +3413,7 @@ function CompanyProfile({
   onRepairContacts: () => void;
   onUpdateCompany: (values: CompanyEditInput) => void;
   onUpdateQuestion: (question: string, answer: string) => void;
-  onUploadFile: (file: File) => void;
+  onUploadFile: (file: File, category: AccountFileCategory) => void;
   onOpenFile: (file: AccountFile, download?: boolean) => void;
 }) {
   const [expandedSection, setExpandedSection] = useState<ProfileTab | null>(null);
@@ -3666,6 +3697,7 @@ function CompanyProfile({
                 ) : null}
                 {manualPanel === "file" ? (
                   <FileCabinet
+                    accountType="company"
                     files={files}
                     fileCabinetError={fileCabinetError}
                     onOpenFile={onOpenFile}
@@ -4099,26 +4131,48 @@ function suggestEmailFollowUp(value: string) {
   return "Follow up on email";
 }
 
+const companyFileCategories: AccountFileCategory[] = ["BOLs", "PODs", "Rate Confirmations", "COIs", "Invoices", "Misc"];
+const carrierFileCategories: AccountFileCategory[] = ["COIs", "W9s", "NOAs", "Carrier Packets", "Misc"];
+
 function FileCabinet({
+  accountType,
   files,
   fileCabinetError,
   onOpenFile,
   onUploadFile
 }: {
+  accountType: AccountFile["accountType"];
   files: AccountFile[];
   fileCabinetError: string;
   onOpenFile: (file: AccountFile, download?: boolean) => void;
-  onUploadFile: (file: File) => void;
+  onUploadFile: (file: File, category: AccountFileCategory) => void;
 }) {
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const categoryOptions = accountType === "carrier" ? carrierFileCategories : companyFileCategories;
+  const [category, setCategory] = useState<AccountFileCategory>("Misc");
 
   return (
     <div className="file-cabinet" aria-label="File Cabinet">
-      <div className="profile-section-heading">
+      <div className="profile-section-heading file-cabinet-heading">
         <span>{files.length} file{files.length === 1 ? "" : "s"}</span>
-        <button className="secondary-action" type="button" onClick={() => inputRef.current?.click()}>
-          Upload File
-        </button>
+        <div className="file-upload-controls">
+          <label>
+            <span className="sr-only">File category</span>
+            <select
+              value={category}
+              onChange={(event) => setCategory(event.target.value as AccountFileCategory)}
+            >
+              {categoryOptions.map((option) => (
+                <option key={option} value={option}>
+                  {option}
+                </option>
+              ))}
+            </select>
+          </label>
+          <button className="secondary-action" type="button" onClick={() => inputRef.current?.click()}>
+            Upload File
+          </button>
+        </div>
       </div>
       <input
         ref={inputRef}
@@ -4128,7 +4182,7 @@ function FileCabinet({
           const file = event.target.files?.[0];
 
           if (file) {
-            onUploadFile(file);
+            onUploadFile(file, category);
             event.target.value = "";
           }
         }}
@@ -4143,8 +4197,9 @@ function FileCabinet({
                   {file.name}
                 </button>
                 <span>
-                  {getFileExtension(file.name)} · {formatFileSize(file.size)} · Uploaded {formatFileDate(file.uploadedAt)}
+                  {file.category} · {getFileExtension(file.name)} · {formatFileSize(file.size)} · Uploaded {formatFileDate(file.uploadedAt)}
                   {file.uploadedBy ? ` by ${file.uploadedBy}` : ""}
+                  {file.provider === "google_drive" ? " · Google Drive" : " · Supabase Storage"}
                 </span>
               </div>
               <div className="file-row-actions">
@@ -4344,9 +4399,12 @@ function CommandTimeline({
         </div>
         {visibleRows.length ? (
           visibleRows.map((entry) => (
-            <div className={entry.type === "task" ? "timeline-item task-event" : "timeline-item"} key={entry.id}>
-              <strong>{formatTimelineTitle(entry.title)}</strong>
-              <span>{entry.detail}</span>
+            <div className={getTimelineItemClassName(entry)} key={entry.id}>
+              <span className="timeline-icon" aria-hidden="true">{getTimelineIcon(entry)}</span>
+              <div className="timeline-copy">
+                <strong>{formatTimelineTitle(entry.title)}</strong>
+                <span>{entry.detail}</span>
+              </div>
             </div>
           ))
         ) : (
@@ -5335,7 +5393,12 @@ function TaskDashboard({
   taskItems: Task[];
 }) {
   if (!taskItems.length) {
-    return <p className="empty">No actions here.</p>;
+    return (
+      <div className="empty-state action-empty-state">
+        <strong>No actions due in this view.</strong>
+        <span>Use Call Notes or Manual Entry when new work comes in.</span>
+      </div>
+    );
   }
 
   const todaySections = [
@@ -5545,6 +5608,47 @@ function getOwnerClassName(owner: string) {
   }
 
   return "";
+}
+
+function getTimelineIcon(entry: ProfileTimelineRow) {
+  const text = `${entry.title} ${entry.detail}`.toLowerCase();
+
+  if (entry.type === "task" || text.includes("action")) {
+    return "✓";
+  }
+
+  if (text.includes("email") || text.includes("outlook") || text.includes("gmail")) {
+    return "✉";
+  }
+
+  if (text.includes("file") || text.includes("bol") || text.includes("pod") || text.includes("coi") || text.includes("w9")) {
+    return "▣";
+  }
+
+  if (isSystemTimelineEvent(entry)) {
+    return "•";
+  }
+
+  return "✎";
+}
+
+function getTimelineItemClassName(entry: ProfileTimelineRow) {
+  const text = `${entry.title} ${entry.detail}`.toLowerCase();
+  const classes = ["timeline-item"];
+
+  if (entry.type === "task" || text.includes("action")) {
+    classes.push("task-event", "timeline-action");
+  } else if (text.includes("email") || text.includes("outlook") || text.includes("gmail")) {
+    classes.push("timeline-email");
+  } else if (text.includes("file") || text.includes("bol") || text.includes("pod") || text.includes("coi") || text.includes("w9")) {
+    classes.push("timeline-file");
+  } else if (isSystemTimelineEvent(entry)) {
+    classes.push("timeline-system");
+  } else {
+    classes.push("timeline-note");
+  }
+
+  return classes.join(" ");
 }
 
 function isSystemTimelineEvent(entry: ProfileTimelineRow) {

@@ -100,3 +100,33 @@ create table if not exists communication_logs (
 create index if not exists communication_logs_company_id_idx on communication_logs(company_id);
 create index if not exists communication_logs_carrier_id_idx on communication_logs(carrier_id);
 create index if not exists communication_logs_occurred_at_idx on communication_logs(occurred_at desc);
+
+
+create table if not exists account_files (
+  id text primary key,
+  company_id uuid references companies(id) on delete cascade,
+  carrier_id uuid references carriers(id) on delete cascade,
+  account_id uuid not null,
+  account_type text not null check (account_type in ('company', 'carrier')),
+  provider text not null check (provider in ('google_drive', 'supabase_storage')),
+  file_name text not null,
+  mime_type text,
+  size_bytes bigint not null default 0,
+  category text not null default 'Misc',
+  google_drive_file_id text,
+  google_drive_folder_id text,
+  google_drive_web_view_link text,
+  google_drive_web_content_link text,
+  supabase_storage_path text,
+  uploaded_by text not null default 'System',
+  uploaded_at timestamptz not null default now(),
+  created_at timestamptz not null default now(),
+  check (
+    (account_type = 'company' and company_id is not null and carrier_id is null) or
+    (account_type = 'carrier' and carrier_id is not null and company_id is null)
+  )
+);
+
+create index if not exists account_files_company_id_idx on account_files(company_id);
+create index if not exists account_files_carrier_id_idx on account_files(carrier_id);
+create index if not exists account_files_uploaded_at_idx on account_files(uploaded_at desc);

@@ -1,7 +1,7 @@
 import { supabase } from "@/lib/supabase";
 import type { StoredBlueBomberState } from "@/lib/storage";
 import { createUuid } from "@/lib/uuid";
-import type { AccountFile, Carrier, CommunicationLog, Company, Contact, Task, TimelineEntry } from "@/types";
+import type { AccountFile, AccountFileCategory, Carrier, CommunicationLog, Company, Contact, Task, TimelineEntry } from "@/types";
 
 export const FILE_BUCKET = "blue-bomber-files";
 
@@ -66,6 +66,26 @@ type TimelineRow = {
   body: string;
   occurred_at: string;
   created_at: string;
+};
+
+type AccountFileRow = {
+  id: string;
+  company_id: string | null;
+  carrier_id: string | null;
+  account_id: string;
+  account_type: AccountFile["accountType"];
+  provider: AccountFile["provider"];
+  file_name: string;
+  mime_type: string | null;
+  size_bytes: number | null;
+  category: AccountFileCategory | null;
+  google_drive_file_id: string | null;
+  google_drive_folder_id: string | null;
+  google_drive_web_view_link: string | null;
+  google_drive_web_content_link: string | null;
+  supabase_storage_path: string | null;
+  uploaded_by: string;
+  uploaded_at: string;
 };
 
 type CommunicationLogRow = {
@@ -279,10 +299,14 @@ export async function uploadSupabaseAccountFile({
     accountId,
     accountType,
     name: file.name,
+    provider: "supabase_storage",
+    category: "Misc",
     path,
     size: file.size,
+    mimeType: file.type || "application/octet-stream",
     uploadedAt: new Date().toISOString(),
-    uploadedBy
+    uploadedBy,
+    supabaseStoragePath: path
   } satisfies AccountFile;
 }
 
@@ -292,7 +316,7 @@ export async function createSupabaseAccountFileSignedUrl(file: AccountFile, down
   }
 
   const signedUrlResult = await supabase.storage.from(FILE_BUCKET).createSignedUrl(
-    file.path,
+    file.supabaseStoragePath ?? file.path,
     60 * 60,
     download
       ? {
@@ -409,6 +433,21 @@ async function loadSupabaseAccountFiles(accounts: Array<Pick<AccountFile, "accou
     return [];
   }
 
+  const metadataResult = await supabase.from("account_files").select("*").order("uploaded_at", { ascending: false });
+
+  if (!metadataResult.error) {
+    const accountKeys = new Set(accounts.map(({ accountId, accountType }) => accountType + ":" + accountId));
+    const metadataFiles = ((metadataResult.data ?? []) as AccountFileRow[])
+      .map(fromAccountFileRow)
+      .filter((file) => accountKeys.has(file.accountType + ":" + file.accountId));
+
+    if (metadataFiles.length) {
+      return metadataFiles;
+    }
+  } else {
+    console.warn("[Blue Bomber Supabase] account_files metadata unavailable:", formatSupabaseError(metadataResult.error));
+  }
+
   const storageClient = supabase.storage.from(FILE_BUCKET);
   const fileGroups = await Promise.all(
     accounts.map(async ({ accountId, accountType }) => {
@@ -433,16 +472,41 @@ async function loadSupabaseAccountFiles(accounts: Array<Pick<AccountFile, "accou
             accountId,
             accountType,
             name: displayFileName(file.name),
+            provider: "supabase_storage",
+            category: "Misc",
             path,
             size: getStorageFileSize(file.metadata),
+            mimeType: "application/octet-stream",
             uploadedAt: file.created_at ?? file.updated_at ?? new Date(0).toISOString(),
-            uploadedBy: ""
+            uploadedBy: "",
+            supabaseStoragePath: path
           } satisfies AccountFile;
         });
     })
   );
 
   return fileGroups.flat().sort((left, right) => right.uploadedAt.localeCompare(left.uploadedAt));
+}
+
+function fromAccountFileRow(row: AccountFileRow): AccountFile {
+  return {
+    id: row.id,
+    accountId: row.account_id,
+    accountType: row.account_type,
+    provider: row.provider,
+    category: row.category ?? "Misc",
+    name: row.file_name,
+    path: row.supabase_storage_path ?? row.google_drive_file_id ?? row.id,
+    size: Number(row.size_bytes ?? 0),
+    mimeType: row.mime_type ?? "application/octet-stream",
+    uploadedAt: row.uploaded_at,
+    uploadedBy: row.uploaded_by,
+    googleDriveFileId: row.google_drive_file_id ?? undefined,
+    googleDriveFolderId: row.google_drive_folder_id ?? undefined,
+    googleDriveWebViewLink: row.google_drive_web_view_link ?? undefined,
+    googleDriveWebContentLink: row.google_drive_web_content_link ?? undefined,
+    supabaseStoragePath: row.supabase_storage_path ?? undefined
+  };
 }
 
 function displayFileName(storageName: string) {
