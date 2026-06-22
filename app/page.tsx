@@ -158,6 +158,51 @@ type ImportPreview = {
   rows: ImportPreviewRow[];
 };
 
+type CarrierImportRow = {
+  carrierName: string;
+  mcNumber: string;
+  dotNumber: string;
+  primaryContact: string;
+  dispatchPhone: string;
+  dispatchEmail: string;
+  mainPhone: string;
+  email: string;
+  safetyEmail: string;
+  accountingEmail: string;
+  address: string;
+  city: string;
+  state: string;
+  zip: string;
+  equipment: string;
+  notes: string;
+  status: string;
+  w9Status: string;
+  coiStatus: string;
+  noaStatus: string;
+  carrierPacketStatus: string;
+};
+
+type CarrierImportFieldKey = keyof CarrierImportRow;
+
+type CarrierImportPreviewRow = {
+  rowNumber: number;
+  row: CarrierImportRow;
+  action: "ready" | "skip";
+  skippedReason: string;
+  duplicateReason: string;
+};
+
+type CarrierImportPreview = {
+  fileName: string;
+  detectedColumns: string[];
+  normalizedColumns: string[];
+  fieldMapping: Record<CarrierImportFieldKey, string>;
+  mappedColumns: Array<{ detected: string; mappedTo: string }>;
+  confidence: "High Confidence" | "Medium Confidence" | "Low Confidence";
+  unmappedColumns: string[];
+  rows: CarrierImportPreviewRow[];
+};
+
 const THEME_STORAGE_KEY = "blue-bomber-theme";
 
 const taskFilters: Array<{ id: TaskFilter; label: string }> = [
@@ -428,8 +473,17 @@ export default function Home() {
   const [importResult, setImportResult] = useState<{ imported: number; skipped: number } | null>(null);
   const [importPreview, setImportPreview] = useState<ImportPreview | null>(null);
   const [isImporting, setIsImporting] = useState(false);
+  const [carrierImportResult, setCarrierImportResult] = useState<{
+    imported: number;
+    skipped: number;
+    duplicates: number;
+    errors: number;
+  } | null>(null);
+  const [carrierImportPreview, setCarrierImportPreview] = useState<CarrierImportPreview | null>(null);
+  const [isCarrierImporting, setIsCarrierImporting] = useState(false);
   const [selectedBulkProspectIds, setSelectedBulkProspectIds] = useState<string[]>([]);
   const importInputRef = useRef<HTMLInputElement | null>(null);
+  const carrierImportInputRef = useRef<HTMLInputElement | null>(null);
   const [noteResult, setNoteResult] = useState<NoteSaveResult | null>(null);
   const [smartNoteReview, setSmartNoteReview] = useState<SmartNoteReview | null>(null);
   const [fileCabinetError, setFileCabinetError] = useState("");
@@ -539,7 +593,7 @@ export default function Home() {
   }, [hasHydratedTheme, themeMode]);
 
   const hasBlockingLocalEdits = useCallback(() => {
-    if (saveInFlightRef.current || smartNoteReview || showProspectForm || showManualActionForm || importPreview || isImporting) {
+    if (saveInFlightRef.current || smartNoteReview || showProspectForm || showManualActionForm || importPreview || isImporting || carrierImportPreview || isCarrierImporting) {
       return true;
     }
 
@@ -557,7 +611,7 @@ export default function Home() {
         activeElement.closest(".new-menu-panel") ||
         activeElement.getAttribute("role") === "dialog"
     );
-  }, [importPreview, isImporting, showManualActionForm, showProspectForm, smartNoteReview]);
+  }, [carrierImportPreview, importPreview, isCarrierImporting, isImporting, showManualActionForm, showProspectForm, smartNoteReview]);
 
   const applySyncedState = useCallback((nextState: StoredBlueBomberState) => {
     skipNextAutoPersistRef.current = true;
@@ -2009,6 +2063,110 @@ export default function Home() {
     }
   }
 
+  async function importCarriers(file: File) {
+    setIsCarrierImporting(true);
+
+    try {
+      const parsedImport = await readCarrierImportRows(file);
+      const preview = buildCarrierImportPreview(file.name, parsedImport, carrierItems);
+
+      setCarrierImportPreview(preview);
+      setCarrierImportResult(null);
+    } catch (error) {
+      console.error("[Blue Bomber Import] Carrier import preview failed:", error);
+      window.alert(error instanceof Error ? error.message : "Carrier import failed.");
+    } finally {
+      setIsCarrierImporting(false);
+
+      if (carrierImportInputRef.current) {
+        carrierImportInputRef.current.value = "";
+      }
+    }
+  }
+
+  async function confirmCarrierImportPreview() {
+    if (!carrierImportPreview) {
+      return;
+    }
+
+    setIsCarrierImporting(true);
+
+    try {
+      const readyRows = carrierImportPreview.rows.filter((row) => row.action === "ready");
+      const importedCarriers: Carrier[] = [];
+      const importedTimeline: TimelineEntry[] = [];
+      const seenImportKeys = new Set<string>();
+      let errors = 0;
+
+      readyRows.forEach((previewRow) => {
+        const row = previewRow.row;
+        const carrierName = row.carrierName.trim();
+
+        if (!carrierName) {
+          errors += 1;
+          return;
+        }
+
+        const duplicateKey = getCarrierImportDuplicateKey(row);
+
+        if (duplicateKey && seenImportKeys.has(duplicateKey)) {
+          errors += 1;
+          return;
+        }
+
+        if (duplicateKey) {
+          seenImportKeys.add(duplicateKey);
+        }
+
+        const carrierId = createUuid();
+        const carrier: Carrier = {
+          id: carrierId,
+          name: carrierName,
+          city: row.city || "Imported",
+          state: row.state || "Carrier",
+          equipment: buildImportedCarrierEquipment(row)
+        };
+
+        importedCarriers.push(carrier);
+        importedTimeline.push({
+          id: createUuid(),
+          companyId: carrierId,
+          at: "Carrier Imported",
+          body: buildCarrierImportTimelineBody(row),
+          createdAt: new Date().toISOString()
+        });
+      });
+
+      const skippedRows = carrierImportPreview.rows.filter((row) => row.action === "skip");
+      const duplicateRows = skippedRows.filter((row) => row.duplicateReason).length;
+      const nextCarriers = importedCarriers.length ? [...importedCarriers, ...carrierItems] : carrierItems;
+      const nextTimeline = importedTimeline.length ? [...importedTimeline, ...timeline] : timeline;
+
+      if (importedCarriers.length || importedTimeline.length) {
+        setCarrierItems(nextCarriers);
+        setTimeline(nextTimeline);
+        persistState({ carriers: nextCarriers, timeline: nextTimeline }, "importing carriers");
+      }
+
+      setCarrierImportResult({
+        imported: importedCarriers.length,
+        skipped: skippedRows.length,
+        duplicates: duplicateRows,
+        errors
+      });
+      setCarrierImportPreview(null);
+    } catch (error) {
+      console.error("[Blue Bomber Import] Carrier import failed:", error);
+      window.alert(error instanceof Error ? error.message : "Carrier import failed.");
+    } finally {
+      setIsCarrierImporting(false);
+    }
+  }
+
+  function cancelCarrierImportPreview() {
+    setCarrierImportPreview(null);
+  }
+
   function cancelImportPreview() {
     setImportPreview(null);
   }
@@ -2562,7 +2720,17 @@ export default function Home() {
       ) : null}
 
       {currentView === "carriers" ? (
-        <CarrierListPage carriers={visibleCarriers} onSelect={selectCarrier} />
+        <CarrierListPage
+          carriers={visibleCarriers}
+          importInputRef={carrierImportInputRef}
+          importPreview={carrierImportPreview}
+          importResult={carrierImportResult}
+          isImporting={isCarrierImporting}
+          onCancelImportPreview={cancelCarrierImportPreview}
+          onConfirmImportPreview={confirmCarrierImportPreview}
+          onImportFile={importCarriers}
+          onSelect={selectCarrier}
+        />
       ) : null}
 
       {(currentView === "prospect-profile" || currentView === "customer-profile") && selectedCompany ? (
@@ -2666,6 +2834,7 @@ export default function Home() {
             files={files.filter((file) => file.accountId === selectedCarrier.id)}
             fileCabinetError={fileCabinetError}
             communicationLogs={communicationLogs.filter((log) => log.entityId === selectedCarrier.id)}
+            timeline={timeline.filter((entry) => entry.companyId === selectedCarrier.id)}
             note={carrierNote}
             noteResult={noteResult}
             tasks={selectedCarrierTasks}
@@ -3207,7 +3376,172 @@ function SmartNoteReviewModal({
   );
 }
 
-function CarrierListPage({ carriers, onSelect }: { carriers: Carrier[]; onSelect: (carrierId: string) => void }) {
+function CarrierImportPreviewPanel({
+  importPreview,
+  isImporting,
+  onCancel,
+  onConfirm
+}: {
+  importPreview: CarrierImportPreview;
+  isImporting: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  const readyRows = importPreview.rows.filter((row) => row.action === "ready");
+  const skippedRows = importPreview.rows.filter((row) => row.action === "skip");
+  const duplicateRows = skippedRows.filter((row) => row.duplicateReason);
+  const primaryFields: CarrierImportFieldKey[] = ["carrierName", "mcNumber", "dotNumber"];
+  const contactFields: CarrierImportFieldKey[] = [
+    "primaryContact",
+    "dispatchPhone",
+    "dispatchEmail",
+    "mainPhone",
+    "email",
+    "safetyEmail",
+    "accountingEmail"
+  ];
+  const operationsFields: CarrierImportFieldKey[] = [
+    "address",
+    "city",
+    "state",
+    "zip",
+    "equipment",
+    "notes",
+    "status",
+    "w9Status",
+    "coiStatus",
+    "noaStatus",
+    "carrierPacketStatus"
+  ];
+
+  return (
+    <section className="import-preview" aria-label="Carrier Import Preview">
+      <div className="import-preview-header">
+        <div>
+          <h3>Carrier Import Wizard</h3>
+          <span>{importPreview.fileName}</span>
+        </div>
+        <strong className={confidenceClassName(importPreview.confidence)}>{importPreview.confidence}</strong>
+        <div className="profile-actions">
+          <button type="button" onClick={onCancel} disabled={isImporting}>
+            Cancel
+          </button>
+          <button type="button" onClick={onConfirm} disabled={isImporting || !readyRows.length}>
+            {isImporting ? "Importing" : "Import Carriers (" + readyRows.length + ")"}
+          </button>
+        </div>
+      </div>
+
+      <div className="import-preview-grid">
+        <div>
+          <strong>Upload Carrier List</strong>
+          <span>{importPreview.fileName}</span>
+        </div>
+        <div>
+          <strong>Detected Columns</strong>
+          <span>{importPreview.detectedColumns.join(", ") || "None"}</span>
+        </div>
+        <div>
+          <strong>Unmapped Columns</strong>
+          <span>{importPreview.unmappedColumns.join(", ") || "None"}</span>
+        </div>
+      </div>
+
+      <div className="import-mapping-grid">
+        <div>
+          <strong>Detected → Mapped To</strong>
+          <ul>
+            {importPreview.mappedColumns.length ? importPreview.mappedColumns.map((mapping) => (
+              <li key={mapping.detected + "-" + mapping.mappedTo}>
+                <span>{mapping.detected}</span>
+                <b>{mapping.mappedTo}</b>
+              </li>
+            )) : (
+              <li>
+                <span>No mapped columns</span>
+                <b>Low Confidence</b>
+              </li>
+            )}
+          </ul>
+        </div>
+        <div>
+          <strong>Mapped Fields</strong>
+          <ul>
+            {[...primaryFields, ...contactFields, ...operationsFields].map((field) => (
+              <li key={field}>
+                <span>{formatCarrierImportField(field)}</span>
+                <b>{importPreview.fieldMapping[field] || "Not mapped"}</b>
+              </li>
+            ))}
+          </ul>
+        </div>
+      </div>
+
+      <div className="import-preview-grid">
+        <div>
+          <strong>Rows Ready to Import</strong>
+          <span>{readyRows.length}</span>
+        </div>
+        <div>
+          <strong>Duplicate Rows</strong>
+          <span>{duplicateRows.length}</span>
+        </div>
+        <div>
+          <strong>Rows Skipped</strong>
+          <span>{skippedRows.length}</span>
+        </div>
+      </div>
+
+      {importPreview.rows.length ? (
+        <ul className="import-row-preview">
+          {importPreview.rows.slice(0, 10).map((row) => (
+            <li className={row.action === "skip" ? "skipped" : ""} key={row.rowNumber}>
+              <strong>Row {row.rowNumber}: {row.row.carrierName || "No carrier"}</strong>
+              {row.action === "ready" ? (
+                <>
+                  <span>
+                    {[row.row.mcNumber ? "MC " + row.row.mcNumber : "", row.row.dotNumber ? "DOT " + row.row.dotNumber : "", row.row.city && row.row.state ? row.row.city + ", " + row.row.state : row.row.city || row.row.state]
+                      .filter(Boolean)
+                      .join(" · ") || "Ready"}
+                  </span>
+                  <ul className="import-contact-preview">
+                    <li>Contact: {row.row.primaryContact || "Not set"}</li>
+                    <li>Dispatch: {[row.row.dispatchPhone, row.row.dispatchEmail].filter(Boolean).join(" | ") || "Not set"}</li>
+                    <li>Compliance: {buildCarrierComplianceSummary(row.row) || "Not set"}</li>
+                  </ul>
+                </>
+              ) : (
+                <span>{row.skippedReason}</span>
+              )}
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </section>
+  );
+}
+
+function CarrierListPage({
+  carriers,
+  importInputRef,
+  importPreview,
+  importResult,
+  isImporting,
+  onCancelImportPreview,
+  onConfirmImportPreview,
+  onImportFile,
+  onSelect
+}: {
+  carriers: Carrier[];
+  importInputRef: React.RefObject<HTMLInputElement>;
+  importPreview: CarrierImportPreview | null;
+  importResult: { imported: number; skipped: number; duplicates: number; errors: number } | null;
+  isImporting: boolean;
+  onCancelImportPreview: () => void;
+  onConfirmImportPreview: () => void;
+  onImportFile: (file: File) => void;
+  onSelect: (carrierId: string) => void;
+}) {
   return (
     <section className="list-page" aria-label="Carrier List">
       <div className="list-header">
@@ -3215,7 +3549,41 @@ function CarrierListPage({ carriers, onSelect }: { carriers: Carrier[]; onSelect
           <h2>Carrier List</h2>
           <span>{carriers.length} active</span>
         </div>
+        <div className="list-header-actions">
+          <div className="import-control">
+            <button type="button" onClick={() => importInputRef.current?.click()} disabled={isImporting}>
+              {isImporting ? "Importing" : "Import Carriers"}
+            </button>
+            <input
+              ref={importInputRef}
+              accept=".csv,.xlsx"
+              aria-label="Import carriers"
+              type="file"
+              onChange={(event) => {
+                const file = event.target.files?.[0];
+
+                if (file) {
+                  void onImportFile(file);
+                }
+              }}
+            />
+            {importResult ? (
+              <span>
+                Imported {importResult.imported} · Skipped {importResult.skipped} · Duplicates {importResult.duplicates} · Errors {importResult.errors}
+              </span>
+            ) : null}
+          </div>
+        </div>
       </div>
+
+      {importPreview ? (
+        <CarrierImportPreviewPanel
+          importPreview={importPreview}
+          isImporting={isImporting}
+          onCancel={onCancelImportPreview}
+          onConfirm={onConfirmImportPreview}
+        />
+      ) : null}
 
       <ul className="record-list">
         {carriers.map((carrier) => (
@@ -3239,6 +3607,7 @@ function CarrierProfile({
   files,
   fileCabinetError,
   communicationLogs,
+  timeline,
   note,
   noteResult,
   tasks,
@@ -3252,6 +3621,7 @@ function CarrierProfile({
   files: AccountFile[];
   fileCabinetError: string;
   communicationLogs: CommunicationLog[];
+  timeline: TimelineEntry[];
   note: string;
   noteResult: NoteSaveResult | null;
   tasks: Task[];
@@ -3264,7 +3634,16 @@ function CarrierProfile({
   const [showCarrierDetails, setShowCarrierDetails] = useState(false);
   const [isManualEntryOpen, setIsManualEntryOpen] = useState(false);
   const [manualPanel, setManualPanel] = useState<"email" | null>(null);
-  const carrierTimelineRows = getCommunicationTimelineRows(communicationLogs);
+  const carrierTimelineRows = [
+    ...timeline.map((entry) => ({
+      id: entry.id,
+      title: entry.at,
+      detail: entry.body,
+      createdAt: entry.createdAt,
+      type: "timeline" as const
+    })),
+    ...getCommunicationTimelineRows(communicationLogs)
+  ].sort((firstEntry, secondEntry) => secondEntry.createdAt.localeCompare(firstEntry.createdAt));
 
   return (
     <section className="profile" aria-label="Carrier Profile">
@@ -5163,6 +5542,392 @@ function formatImportField(field: ImportFieldKey) {
   };
 
   return labels[field];
+}
+
+async function readCarrierImportRows(file: File) {
+  const extension = file.name.split(".").pop()?.toLowerCase();
+
+  if (extension === "csv") {
+    return parseCarrierRows(parseCsv(await file.text()));
+  }
+
+  if (extension === "xlsx") {
+    const workbook = XLSX.read(await file.arrayBuffer(), { type: "array" });
+    const firstSheetName = workbook.SheetNames[0];
+
+    if (!firstSheetName) {
+      return parseCarrierRows([]);
+    }
+
+    return parseCarrierRows(
+      XLSX.utils.sheet_to_json<Record<string, unknown>>(workbook.Sheets[firstSheetName], {
+        defval: ""
+      })
+    );
+  }
+
+  throw new Error("Carrier import requires a .csv or .xlsx file.");
+}
+
+function parseCarrierRows(rows: Array<Record<string, unknown>>): {
+  headers: string[];
+  normalizedHeaders: string[];
+  fieldMapping: Record<CarrierImportFieldKey, string>;
+  rows: CarrierImportRow[];
+  unmappedColumns: string[];
+} {
+  const headers = getImportHeaders(rows);
+  const fieldMapping = mapCarrierImportHeaders(headers);
+  const mappedHeaders = new Set(Object.values(fieldMapping).filter(Boolean));
+  const unmappedColumns = headers.filter((header) => !mappedHeaders.has(header));
+
+  console.log("[Blue Bomber Carrier Import] raw headers:", headers);
+  console.log("[Blue Bomber Carrier Import] normalized headers:", headers.map(normalizeImportHeader));
+  console.log("[Blue Bomber Carrier Import] field mapping result:", fieldMapping);
+
+  return {
+    headers,
+    normalizedHeaders: headers.map(normalizeImportHeader),
+    fieldMapping,
+    unmappedColumns,
+    rows: rows.map((row) => ({
+      carrierName: getImportMappedValue(row, fieldMapping.carrierName),
+      mcNumber: normalizeCarrierNumber(getImportMappedValue(row, fieldMapping.mcNumber)),
+      dotNumber: normalizeCarrierNumber(getImportMappedValue(row, fieldMapping.dotNumber)),
+      primaryContact: cleanBlankImportValue(getImportMappedValue(row, fieldMapping.primaryContact)),
+      dispatchPhone: normalizeImportPhone(getImportMappedValue(row, fieldMapping.dispatchPhone)),
+      dispatchEmail: normalizeImportEmail(getImportMappedValue(row, fieldMapping.dispatchEmail)),
+      mainPhone: normalizeImportPhone(getImportMappedValue(row, fieldMapping.mainPhone)),
+      email: normalizeImportEmail(getImportMappedValue(row, fieldMapping.email)),
+      safetyEmail: normalizeImportEmail(getImportMappedValue(row, fieldMapping.safetyEmail)),
+      accountingEmail: normalizeImportEmail(getImportMappedValue(row, fieldMapping.accountingEmail)),
+      address: cleanBlankImportValue(getImportMappedValue(row, fieldMapping.address)),
+      city: cleanBlankImportValue(getImportMappedValue(row, fieldMapping.city)),
+      state: normalizeStateAbbreviation(getImportMappedValue(row, fieldMapping.state)),
+      zip: cleanBlankImportValue(getImportMappedValue(row, fieldMapping.zip)),
+      equipment: cleanBlankImportValue(getImportMappedValue(row, fieldMapping.equipment)),
+      notes: cleanBlankImportValue(getImportMappedValue(row, fieldMapping.notes)),
+      status: cleanBlankImportValue(getImportMappedValue(row, fieldMapping.status)),
+      w9Status: cleanBlankImportValue(getImportMappedValue(row, fieldMapping.w9Status)),
+      coiStatus: cleanBlankImportValue(getImportMappedValue(row, fieldMapping.coiStatus)),
+      noaStatus: cleanBlankImportValue(getImportMappedValue(row, fieldMapping.noaStatus)),
+      carrierPacketStatus: cleanBlankImportValue(getImportMappedValue(row, fieldMapping.carrierPacketStatus))
+    }))
+  };
+}
+
+const carrierImportFieldAliases: Record<CarrierImportFieldKey, string[]> = {
+  carrierName: ["carrier", "carrier name", "company", "company name", "name"],
+  mcNumber: ["mc", "mc number", "mc#", "mc no", "mc no.", "motor carrier"],
+  dotNumber: ["dot", "dot number", "dot#", "dot no", "dot no.", "usdot", "us dot"],
+  primaryContact: ["contact", "primary contact", "contact name", "poc", "dispatcher", "dispatch contact"],
+  dispatchPhone: ["dispatch phone", "contact phone", "phone", "phone number"],
+  dispatchEmail: ["dispatch email", "contact email", "email", "email address"],
+  mainPhone: ["main phone", "office phone", "carrier phone", "telephone"],
+  email: ["email", "email address", "main email", "carrier email"],
+  safetyEmail: ["safety email", "safety"],
+  accountingEmail: ["accounting email", "billing email", "accounts payable", "ap email"],
+  address: ["address", "street", "street address", "address 1", "mailing address"],
+  city: ["city", "location city", "location: city", "town"],
+  state: ["state", "province", "location state", "location: state", "st"],
+  zip: ["zip", "zipcode", "zip code", "postal code"],
+  equipment: ["equipment", "equipment type", "trucks", "trailer", "trailer type"],
+  notes: ["notes", "note", "comments", "description"],
+  status: ["status", "carrier status", "type", "category"],
+  w9Status: ["w9", "w9 status", "w-9", "w-9 status"],
+  coiStatus: ["coi", "coi status", "insurance", "insurance status", "certificate of insurance"],
+  noaStatus: ["noa", "noa status"],
+  carrierPacketStatus: ["packet", "carrier packet", "carrier packet status", "setup packet"]
+};
+
+function mapCarrierImportHeaders(headers: string[]): Record<CarrierImportFieldKey, string> {
+  return Object.fromEntries(
+    Object.entries(carrierImportFieldAliases).map(([field, aliases]) => {
+      const matchedHeader = findBestImportHeader(headers, aliases);
+
+      return [field, matchedHeader];
+    })
+  ) as Record<CarrierImportFieldKey, string>;
+}
+
+function buildCarrierImportPreview(
+  fileName: string,
+  parsedImport: {
+    headers: string[];
+    normalizedHeaders: string[];
+    fieldMapping: Record<CarrierImportFieldKey, string>;
+    rows: CarrierImportRow[];
+    unmappedColumns: string[];
+  },
+  existingCarriers: Carrier[]
+): CarrierImportPreview {
+  const existingKeys = new Set(existingCarriers.flatMap(getCarrierDuplicateKeys));
+  const seenKeys = new Set<string>();
+
+  return {
+    fileName,
+    detectedColumns: parsedImport.headers,
+    normalizedColumns: parsedImport.normalizedHeaders,
+    fieldMapping: parsedImport.fieldMapping,
+    mappedColumns: buildCarrierImportMappedColumns(parsedImport.headers, parsedImport.fieldMapping),
+    confidence: getCarrierImportConfidence(parsedImport.fieldMapping),
+    unmappedColumns: parsedImport.unmappedColumns,
+    rows: parsedImport.rows.map((row, index) => {
+      const duplicateKey = getCarrierImportDuplicateKey(row);
+      const duplicateReason = getCarrierImportDuplicateReason(row, existingKeys, seenKeys);
+      let skippedReason = duplicateReason;
+
+      if (!row.carrierName.trim()) {
+        skippedReason = "Missing carrier name";
+      }
+
+      if (duplicateKey) {
+        seenKeys.add(duplicateKey);
+      }
+
+      console.log("[Blue Bomber Carrier Import] row import result:", {
+        rowNumber: index + 2,
+        carrierName: row.carrierName,
+        action: skippedReason ? "skip" : "ready",
+        skippedReason
+      });
+
+      return {
+        rowNumber: index + 2,
+        row,
+        action: skippedReason ? "skip" : "ready",
+        skippedReason,
+        duplicateReason
+      };
+    })
+  };
+}
+
+function buildCarrierImportMappedColumns(headers: string[], fieldMapping: Record<CarrierImportFieldKey, string>) {
+  return headers
+    .map((header) => {
+      const mappedFields = (Object.entries(fieldMapping) as Array<[CarrierImportFieldKey, string]>)
+        .filter(([, mappedHeader]) => mappedHeader === header)
+        .map(([field]) => formatCarrierImportField(field));
+
+      return {
+        detected: header,
+        mappedTo: mappedFields.join(", ")
+      };
+    })
+    .filter((mapping) => mapping.mappedTo);
+}
+
+function getCarrierImportConfidence(fieldMapping: Record<CarrierImportFieldKey, string>): CarrierImportPreview["confidence"] {
+  const requiredFields: CarrierImportFieldKey[] = ["carrierName", "mcNumber", "dotNumber"];
+  const mappedRequiredCount = requiredFields.filter((field) => fieldMapping[field]).length;
+  const mappedOperationalCount = (["dispatchPhone", "dispatchEmail", "city", "state", "equipment"] as CarrierImportFieldKey[])
+    .filter((field) => fieldMapping[field]).length;
+
+  if (fieldMapping.carrierName && mappedRequiredCount >= 2 && mappedOperationalCount >= 2) {
+    return "High Confidence";
+  }
+
+  if (fieldMapping.carrierName && mappedRequiredCount >= 1) {
+    return "Medium Confidence";
+  }
+
+  return "Low Confidence";
+}
+
+function formatCarrierImportField(field: CarrierImportFieldKey) {
+  const labels: Record<CarrierImportFieldKey, string> = {
+    carrierName: "Carrier Name",
+    mcNumber: "MC Number",
+    dotNumber: "DOT Number",
+    primaryContact: "Primary Contact",
+    dispatchPhone: "Dispatch Phone",
+    dispatchEmail: "Dispatch Email",
+    mainPhone: "Main Phone",
+    email: "Email",
+    safetyEmail: "Safety Email",
+    accountingEmail: "Accounting Email",
+    address: "Address",
+    city: "City",
+    state: "State",
+    zip: "Zip",
+    equipment: "Equipment",
+    notes: "Notes",
+    status: "Status",
+    w9Status: "W9 Status",
+    coiStatus: "COI Status",
+    noaStatus: "NOA Status",
+    carrierPacketStatus: "Carrier Packet Status"
+  };
+
+  return labels[field];
+}
+
+function getCarrierImportDuplicateReason(row: CarrierImportRow, existingKeys: Set<string>, seenKeys: Set<string>) {
+  const duplicateKey = getCarrierImportDuplicateKey(row);
+
+  if (!duplicateKey) {
+    return "";
+  }
+
+  if (existingKeys.has(duplicateKey)) {
+    return duplicateKey.startsWith("mc:")
+      ? "Duplicate MC Number already exists"
+      : duplicateKey.startsWith("dot:")
+        ? "Duplicate DOT Number already exists"
+        : "Duplicate carrier name already exists";
+  }
+
+  if (seenKeys.has(duplicateKey)) {
+    return duplicateKey.startsWith("mc:")
+      ? "Duplicate MC Number in import file"
+      : duplicateKey.startsWith("dot:")
+        ? "Duplicate DOT Number in import file"
+        : "Duplicate carrier name in import file";
+  }
+
+  return "";
+}
+
+function getCarrierImportDuplicateKey(row: CarrierImportRow) {
+  if (row.mcNumber) {
+    return "mc:" + row.mcNumber;
+  }
+
+  if (row.dotNumber) {
+    return "dot:" + row.dotNumber;
+  }
+
+  const normalizedName = normalizeCompanyName(row.carrierName);
+
+  return normalizedName ? "name:" + normalizedName : "";
+}
+
+function getCarrierDuplicateKeys(carrier: Carrier) {
+  const keys: string[] = [];
+  const mcNumber = extractCarrierNumber(carrier.equipment, "mc");
+  const dotNumber = extractCarrierNumber(carrier.equipment, "dot");
+  const normalizedName = normalizeCompanyName(carrier.name);
+
+  if (mcNumber) {
+    keys.push("mc:" + mcNumber);
+  }
+
+  if (dotNumber) {
+    keys.push("dot:" + dotNumber);
+  }
+
+  if (normalizedName) {
+    keys.push("name:" + normalizedName);
+  }
+
+  return keys;
+}
+
+function extractCarrierNumber(value: string, type: "mc" | "dot") {
+  const pattern = type === "mc" ? /MCs*:?s*(d+)/i : /DOTs*:?s*(d+)/i;
+
+  return value.match(pattern)?.[1] ?? "";
+}
+
+function buildImportedCarrierEquipment(row: CarrierImportRow) {
+  return [
+    row.equipment || "Equipment TBD",
+    row.mcNumber ? "MC " + row.mcNumber : "",
+    row.dotNumber ? "DOT " + row.dotNumber : ""
+  ]
+    .filter(Boolean)
+    .join(" · ");
+}
+
+function buildCarrierComplianceSummary(row: CarrierImportRow) {
+  return [
+    row.w9Status ? "W9: " + row.w9Status : "",
+    row.coiStatus ? "COI: " + row.coiStatus : "",
+    row.noaStatus ? "NOA: " + row.noaStatus : "",
+    row.carrierPacketStatus ? "Packet: " + row.carrierPacketStatus : ""
+  ]
+    .filter(Boolean)
+    .join(" · ");
+}
+
+function buildCarrierImportTimelineBody(row: CarrierImportRow) {
+  const lines = [
+    row.mcNumber ? "MC Number: " + row.mcNumber : "",
+    row.dotNumber ? "DOT Number: " + row.dotNumber : "",
+    row.primaryContact ? "Primary Contact: " + row.primaryContact : "",
+    row.dispatchPhone ? "Dispatch Phone: " + row.dispatchPhone : "",
+    row.dispatchEmail ? "Dispatch Email: " + row.dispatchEmail : "",
+    row.mainPhone ? "Main Phone: " + row.mainPhone : "",
+    row.email ? "Email: " + row.email : "",
+    row.safetyEmail ? "Safety Email: " + row.safetyEmail : "",
+    row.accountingEmail ? "Accounting Email: " + row.accountingEmail : "",
+    row.address ? "Address: " + row.address : "",
+    row.city || row.state || row.zip ? "Location: " + [row.city, row.state, row.zip].filter(Boolean).join(", ") : "",
+    row.status ? "Status: " + row.status : "",
+    buildCarrierComplianceSummary(row),
+    row.notes ? "Notes: " + row.notes : ""
+  ].filter(Boolean);
+
+  return lines.length ? lines.join("\n") : "Carrier Imported";
+}
+
+function normalizeCarrierNumber(value: string) {
+  return cleanBlankImportValue(value).replace(/[^0-9]/g, "");
+}
+
+function normalizeImportEmail(value: string) {
+  return extractImportEmails(value)[0]?.toLowerCase() ?? cleanBlankImportValue(value).toLowerCase();
+}
+
+function normalizeImportPhone(value: string) {
+  const phone = extractImportPhones(value)[0] ?? cleanBlankImportField(value);
+
+  return phone.replace(/\s+/g, " ").trim();
+}
+
+function cleanBlankImportField(value: string) {
+  return cleanBlankImportValue(value);
+}
+
+function cleanBlankImportValue(value: string) {
+  const trimmed = String(value ?? "").trim();
+
+  return /^(?:n\/?a|na|none|null|undefined|-)$/i.test(trimmed) ? "" : trimmed;
+}
+
+function normalizeStateAbbreviation(value: string) {
+  const cleanValue = cleanBlankImportValue(value);
+  const upperValue = cleanValue.toUpperCase();
+
+  if (/^[A-Z]{2}$/.test(upperValue)) {
+    return upperValue;
+  }
+
+  const stateMap: Record<string, string> = {
+    alabama: "AL",
+    alaska: "AK",
+    arizona: "AZ",
+    arkansas: "AR",
+    california: "CA",
+    colorado: "CO",
+    connecticut: "CT",
+    delaware: "DE",
+    florida: "FL",
+    georgia: "GA",
+    illinois: "IL",
+    indiana: "IN",
+    kentucky: "KY",
+    michigan: "MI",
+    newyork: "NY",
+    ohio: "OH",
+    pennsylvania: "PA",
+    tennessee: "TN",
+    texas: "TX",
+    wisconsin: "WI"
+  };
+
+  return stateMap[compactImportHeader(cleanValue)] ?? cleanValue;
 }
 
 function parseCsv(value: string) {
