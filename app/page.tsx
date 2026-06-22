@@ -2339,12 +2339,22 @@ export default function Home() {
           </div>
           <div className="user-menu">
             <button
-              className="user-menu-trigger"
+              aria-label={`${appUser.name} ${appUser.role} menu`}
+              className="user-menu-trigger profile-pill"
               type="button"
               onClick={() => setShowUserMenu((value) => !value)}
             >
-              <strong>{appUser.name}</strong>
-              <span>{appUser.role}</span>
+              <span className="profile-pill-avatar" aria-hidden="true">
+                👤
+              </span>
+              <span className="profile-pill-label">
+                <strong>{appUser.name}</strong>
+                <span aria-hidden="true">•</span>
+                <em>{appUser.role}</em>
+              </span>
+              <span className="profile-pill-chevron" aria-hidden="true">
+                ▾
+              </span>
             </button>
             {showUserMenu ? (
               <div className="user-menu-panel">
