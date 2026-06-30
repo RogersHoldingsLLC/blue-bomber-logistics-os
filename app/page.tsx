@@ -654,13 +654,19 @@ try {
     console.log("[Apps Script] Companies:", result.companies);
 console.log("[Apps Script] Tasks:", result.tasks);
 console.log("[Apps Script] Activity:", result.activity);return {
-      companies: (result.companies ?? []).map(mapCompanyFromSheet),
+      companies: (result.companies ?? []).map((row) =>
+  mapCompanyFromSheet(row as Record<string, unknown>)
+),
       contacts: [],
-      tasks: (result.tasks ?? []).map(mapTaskFromSheet),
+      tasks: (result.tasks ?? []).map((row) =>
+  mapTaskFromSheet(row as Record<string, unknown>)
+),
       timeline: [],
       carriers: seedCarriers,
       files: [],
-      communicationLogs: (result.activity ?? []).map(mapActivityFromSheet)
+      communicationLogs: (result.activity ?? []).map((row) =>
+  mapActivityFromSheet(row as Record<string, unknown>)
+)
     };
   }
 } catch (error) {
