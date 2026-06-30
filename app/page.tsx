@@ -632,22 +632,7 @@ export default function Home() {
   }, []);
 
   const loadLatestState = useCallback(async (): Promise<StoredBlueBomberState | null> => {
-    if (canUseSupabase()) {
-      const supabaseState = await loadSupabaseState();
-
-      if (supabaseState && (supabaseState.companies.length || supabaseState.tasks.length || supabaseState.communicationLogs?.length)) {
-        return {
-          companies: supabaseState.companies,
-          contacts: supabaseState.contacts,
-          tasks: supabaseState.tasks,
-          timeline: supabaseState.timeline,
-          carriers: supabaseState.carriers,
-          files: supabaseState.files ?? [],
-          communicationLogs: supabaseState.communicationLogs ?? []
-        };
-      }
-    }
-try {
+    try {
   const result = await searchBlueBomberAll();
 
   if (result.companies?.length || result.tasks?.length || result.activity?.length) {
@@ -674,6 +659,21 @@ console.log("[Apps Script] Activity:", result.activity);return {
     "[Blue Bomber] Apps Script load failed:",
     error instanceof Error ? error.message : error
   );
+    if (canUseSupabase()) {
+      const supabaseState = await loadSupabaseState();
+
+      if (supabaseState && (supabaseState.companies.length || supabaseState.tasks.length || supabaseState.communicationLogs?.length)) {
+        return {
+          companies: supabaseState.companies,
+          contacts: supabaseState.contacts,
+          tasks: supabaseState.tasks,
+          timeline: supabaseState.timeline,
+          carriers: supabaseState.carriers,
+          files: supabaseState.files ?? [],
+          communicationLogs: supabaseState.communicationLogs ?? []
+        };
+      }
+    }
 }
     const storedState = loadStoredState();
 
