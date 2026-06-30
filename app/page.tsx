@@ -26,6 +26,7 @@ import {
 } from "@/lib/supabase-storage";
 import { createUuid } from "@/lib/uuid";
 import { supabase } from "@/lib/supabase";
+import { searchBlueBomberAll } from "@/lib/blue-bomber-api";
 import type { AccountFile, AccountFileCategory, Carrier, CommunicationLog, Company, CompanyStatus, Contact, Task, TimelineEntry } from "@/types";
 
 type AppRole = "Admin" | "Operations";
