@@ -1273,8 +1273,8 @@ export default function Home() {
         action: "CREATE_PROSPECT",
         data: {
           companyName: trimmedName,
-          contact: "",
-          email: "",
+          contact: window.prompt("Primary contact name for Gmail draft? Leave blank if unknown.")?.trim() ?? "",
+email: window.prompt("Email address for Gmail draft? Leave blank to skip draft.")?.trim() ?? "",
           assignedTo: "Brian",
           notes: "Created from Blue Bomber OS web app."
         }
@@ -6951,3 +6951,4 @@ function formatDate(value: string) {
     year: "numeric"
   }).format(new Date(value));
 }
+
