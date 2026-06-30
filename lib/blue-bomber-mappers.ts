@@ -62,7 +62,7 @@ export function mapTaskFromSheet(row: SheetRow): Task {
     id: text(row, "Task ID"),
     companyId: text(row, "Company ID") || text(row, "Related Record ID"),
     entityId: text(row, "Related Record ID"),
-    entityType: "company",
+    entityType: "prospect",
     title: text(row, "Task Title") || text(row, "Task Type") || "Follow up",
     due: text(row, "Due Date") || "Today",
     priority: normalizePriority(text(row, "Priority")),
@@ -80,7 +80,7 @@ export function mapActivityFromSheet(row: SheetRow): CommunicationLog {
   return {
     id: text(row, "Activity ID"),
     entityId: text(row, "Related Record ID") || text(row, "Company ID"),
-    entityType: "company",
+    entityType: "prospect",
     direction: "sent",
     subject: text(row, "Activity Type"),
     contactOrEmail: text(row, "Notes"),
