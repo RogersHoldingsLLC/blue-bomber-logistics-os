@@ -10,7 +10,7 @@ function normalizeStatus(value: string): Company["status"] {
   const status = value.toLowerCase();
 
   if (status === "customer") return "customer";
-  if (status === "inactive") return "inactive";
+  if (status === "inactive") return "prospect";
 
   return "prospect";
 }
