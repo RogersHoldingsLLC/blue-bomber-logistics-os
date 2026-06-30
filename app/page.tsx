@@ -27,6 +27,11 @@ import {
 import { createUuid } from "@/lib/uuid";
 import { supabase } from "@/lib/supabase";
 import { searchBlueBomberAll } from "@/lib/blue-bomber-api";
+import {
+  mapCompanyFromSheet,
+  mapTaskFromSheet,
+  mapActivityFromSheet
+} from "@/lib/blue-bomber-mappers";
 import type { AccountFile, AccountFileCategory, Carrier, CommunicationLog, Company, CompanyStatus, Contact, Task, TimelineEntry } from "@/types";
 
 type AppRole = "Admin" | "Operations";
@@ -630,7 +635,7 @@ export default function Home() {
     if (canUseSupabase()) {
       const supabaseState = await loadSupabaseState();
 
-      if (supabaseState) {
+      if (supabaseState && (supabaseState.companies.length || supabaseState.tasks.length || supabaseState.communicationLogs?.length)) {
         return {
           companies: supabaseState.companies,
           contacts: supabaseState.contacts,
@@ -642,7 +647,28 @@ export default function Home() {
         };
       }
     }
+try {
+  const result = await searchBlueBomberAll();
 
+  if (result.companies?.length || result.tasks?.length || result.activity?.length) {
+    console.log("[Apps Script] Companies:", result.companies);
+console.log("[Apps Script] Tasks:", result.tasks);
+console.log("[Apps Script] Activity:", result.activity);return {
+      companies: (result.companies ?? []).map(mapCompanyFromSheet),
+      contacts: [],
+      tasks: (result.tasks ?? []).map(mapTaskFromSheet),
+      timeline: [],
+      carriers: seedCarriers,
+      files: [],
+      communicationLogs: (result.activity ?? []).map(mapActivityFromSheet)
+    };
+  }
+} catch (error) {
+  console.warn(
+    "[Blue Bomber] Apps Script load failed:",
+    error instanceof Error ? error.message : error
+  );
+}
     const storedState = loadStoredState();
 
     if (!storedState) {
