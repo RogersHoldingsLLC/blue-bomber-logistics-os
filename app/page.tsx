@@ -1234,64 +1234,91 @@ export default function Home() {
     }, reason);
   }
 
-  function addProspect() {
-    const trimmedName = prospectName.trim();
+  async function addProspect() {
+  const trimmedName = prospectName.trim();
 
-    if (!trimmedName) {
-      return;
-    }
+  if (!trimmedName) {
+    return;
+  }
 
-    if (quickCreateType === "carrier") {
-      const newCarrier: Carrier = {
-        id: createUuid(),
-        name: trimmedName,
-        city: "New",
-        state: "Carrier",
-        equipment: "Equipment TBD"
-      };
-      const nextCarriers = [newCarrier, ...carrierItems];
-
-      setCarrierItems(nextCarriers);
-      persistState({ carriers: nextCarriers }, "creating carrier");
-      setSelectedCarrierId(newCarrier.id);
-      setSelectedCompanyId(null);
-      setCurrentView("carrier-profile");
-      setProspectName("");
-      setShowProspectForm(false);
-      return;
-    }
-
-    const companyStatus = quickCreateType === "customer" ? "customer" : "prospect";
-    const newCompany: Company = {
+  if (quickCreateType === "carrier") {
+    const newCarrier: Carrier = {
       id: createUuid(),
       name: trimmedName,
-      status: companyStatus,
       city: "New",
-      state: statusLabel(companyStatus),
-      segment: statusLabel(companyStatus),
-      currentOpportunity: `New ${statusLabel(companyStatus).toLowerCase()}. Add freight notes after first contact.`,
-      smartNotes: "",
-      salesLead: "Louie",
-      operationsLead: "Brian",
-      primaryContactId: "",
-      lastContact: "",
-      lastActivity: "Today",
-      active: true,
-      qualifyingQuestions: Object.fromEntries(
-        qualifyingQuestions.map((question) => [question, ""])
-      )
+      state: "Carrier",
+      equipment: "Equipment TBD"
     };
+    const nextCarriers = [newCarrier, ...carrierItems];
 
-    const nextCompanies = [newCompany, ...companies];
-
-    setCompanies(nextCompanies);
-    persistState({ companies: nextCompanies }, "creating company");
-    setSelectedCompanyId(newCompany.id);
-    setSelectedCarrierId(null);
-    setCurrentView(companyStatus === "customer" ? "customer-profile" : "prospect-profile");
+    setCarrierItems(nextCarriers);
+    persistState({ carriers: nextCarriers }, "creating carrier");
+    setSelectedCarrierId(newCarrier.id);
+    setSelectedCompanyId(null);
+    setCurrentView("carrier-profile");
     setProspectName("");
     setShowProspectForm(false);
+    return;
   }
+
+  const companyStatus = quickCreateType === "customer" ? "customer" : "prospect";
+
+  if (companyStatus === "prospect") {
+    const response = await fetch("/api/blue-bomber", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        action: "CREATE_PROSPECT",
+        data: {
+          companyName: trimmedName,
+          contact: "",
+          email: "",
+          assignedTo: "Brian",
+          notes: "Created from Blue Bomber OS web app."
+        }
+      })
+    });
+
+    const result = await response.json();
+
+    if (!result.success) {
+      alert(result.message || "Blue Bomber automation failed.");
+      return;
+    }
+  }
+
+  const newCompany: Company = {
+    id: createUuid(),
+    name: trimmedName,
+    status: companyStatus,
+    city: "New",
+    state: statusLabel(companyStatus),
+    segment: statusLabel(companyStatus),
+    currentOpportunity: `New ${statusLabel(companyStatus).toLowerCase()}. Add freight notes after first contact.`,
+    smartNotes: "",
+    salesLead: "Louie",
+    operationsLead: "Brian",
+    primaryContactId: "",
+    lastContact: "",
+    lastActivity: "Today",
+    active: true,
+    qualifyingQuestions: Object.fromEntries(
+      qualifyingQuestions.map((question) => [question, ""])
+    )
+  };
+
+  const nextCompanies = [newCompany, ...companies];
+
+  setCompanies(nextCompanies);
+  persistState({ companies: nextCompanies }, "creating company");
+  setSelectedCompanyId(newCompany.id);
+  setSelectedCarrierId(null);
+  setCurrentView(companyStatus === "customer" ? "customer-profile" : "prospect-profile");
+  setProspectName("");
+  setShowProspectForm(false);
+}
 
   function openQuickCreate(type: QuickCreateType) {
     setQuickCreateType(type);
