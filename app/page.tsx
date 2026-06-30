@@ -4,14 +4,9 @@ import { type FormEvent, useCallback, useEffect, useMemo, useRef, useState } fro
 import type { User } from "@supabase/supabase-js";
 import * as XLSX from "xlsx";
 import {
-  carriers as seedCarriers,
   communicationLogs as seedCommunicationLogs,
-  companies as seedCompanies,
-  contacts as seedContacts,
   files as seedFiles,
   qualifyingQuestions,
-  tasks as seedTasks,
-  timeline as seedTimeline
 } from "@/lib/data";
 import { applyCarrierIntent, applyIntent, type IntentResult } from "@/lib/intent-engine";
 import { loadStoredState, saveStoredState, type StoredBlueBomberState } from "@/lib/storage";
@@ -455,11 +450,11 @@ export default function Home() {
   const [appUser, setAppUser] = useState<AppUser | null>(null);
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [showNewMenu, setShowNewMenu] = useState(false);
-  const [companies, setCompanies] = useState(seedCompanies);
-  const [contacts, setContacts] = useState(seedContacts);
-  const [tasks, setTasks] = useState(seedTasks);
-  const [timeline, setTimeline] = useState(seedTimeline);
-  const [carrierItems, setCarrierItems] = useState(seedCarriers);
+  const [companies, setCompanies] = useState<Company[]>([]);
+  const [contacts, setContacts] = useState<Contact[]>([]);
+  const [tasks, setTasks] = useState<Task[]>([]);
+  const [timeline, setTimeline] = useState<TimelineEntry[]>([]);
+  const [carrierItems, setCarrierItems] = useState<Carrier[]>([]);
   const [files, setFiles] = useState<AccountFile[]>(seedFiles);
   const [communicationLogs, setCommunicationLogs] = useState<CommunicationLog[]>(seedCommunicationLogs);
   const [hasHydratedStorage, setHasHydratedStorage] = useState(false);
@@ -625,7 +620,7 @@ export default function Home() {
     setContacts(nextState.contacts);
     setTasks(nextState.tasks);
     setTimeline(nextState.timeline);
-    setCarrierItems(nextState.carriers.length ? nextState.carriers : seedCarriers);
+    setCarrierItems(nextState.carriers);
     setFiles(nextState.files ?? []);
     setCommunicationLogs(nextState.communicationLogs ?? []);
     saveStoredState(nextState);
@@ -647,7 +642,7 @@ console.log("[Apps Script] Activity:", result.activity);return {
   mapTaskFromSheet(row as Record<string, unknown>)
 ),
       timeline: [],
-      carriers: seedCarriers,
+     carriers: [], 
       files: [],
       communicationLogs: (result.activity ?? []).map((row) =>
   mapActivityFromSheet(row as Record<string, unknown>)
@@ -686,7 +681,7 @@ console.log("[Apps Script] Activity:", result.activity);return {
       contacts: storedState.contacts,
       tasks: storedState.tasks,
       timeline: storedState.timeline,
-      carriers: storedState.carriers.length ? storedState.carriers : seedCarriers,
+      carriers: storedState.carriers ?? [],
       files: storedState.files ?? [],
       communicationLogs: storedState.communicationLogs ?? []
     };
@@ -751,7 +746,7 @@ console.log("[Apps Script] Activity:", result.activity);return {
             contacts: storedState.contacts,
             tasks: storedState.tasks,
             timeline: storedState.timeline,
-            carriers: storedState.carriers.length ? storedState.carriers : seedCarriers,
+            carriers: storedState.carriers ?? [],
             files: storedState.files ?? [],
             communicationLogs: storedState.communicationLogs ?? []
           });
@@ -3849,12 +3844,12 @@ function CompanyProfile({
 }: {
   canManageAccount: boolean;
   company: Company;
-  contacts: typeof seedContacts;
+  contacts: Contact[]; 
   communicationLogs: CommunicationLog[];
   files: AccountFile[];
   fileCabinetError: string;
   tasks: Task[];
-  timeline: typeof seedTimeline;
+  timeline: TimelineEntry[];
   noteResult: NoteSaveResult | null;
   onSmartNotesChange: (smartNotes: string) => void;
   onAddNote: () => void;
@@ -4747,7 +4742,7 @@ function ProfileContactsSection({
   contacts,
   onAddManualContact
 }: {
-  contacts: typeof seedContacts;
+  contacts: Contact[];
   onAddManualContact: (values: ManualContactInput) => void;
 }) {
   const [showForm, setShowForm] = useState(false);
